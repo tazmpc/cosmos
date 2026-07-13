@@ -1,0 +1,37 @@
+import * as THREE from 'three'
+import { decodeCatalog, type StarCatalog } from '../data/catalogFormat'
+import { buildPointGeometry, makePointMaterial } from './starField'
+
+export interface GalaxyField {
+  points: THREE.Points
+  catalog: StarCatalog
+  /** Call each frame with the camera's true heliocentric position in AU, and this layer's crossfade alpha (0..1). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
+}
+
+const GALAXY_UNIT_TO_AU = 2.06264806e11 // Mpc -> AU
+
+export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> {
+  const binRes = await fetch('/galaxies.bin')
+  if (!binRes.ok) throw new Error('galaxy catalog fetch failed')
+  const catalog = decodeCatalog(await binRes.arrayBuffer())
+
+  const geo = buildPointGeometry(catalog)
+  const mat = makePointMaterial({
+    unitToAu: GALAXY_UNIT_TO_AU, scale: 60, faintMag: 20, minSize: 1.5, maxSize: 9,
+  })
+
+  const points = new THREE.Points(geo, mat)
+  points.frustumCulled = false // shader-space positions; three's culling would use wrong bounds
+  points.matrixAutoUpdate = false
+  scene.add(points)
+
+  return {
+    points, catalog,
+    update(camTruePosAu, layerAlpha = 1) {
+      ;(mat.uniforms.uCamPc.value as THREE.Vector3)
+        .set(camTruePosAu.x / GALAXY_UNIT_TO_AU, camTruePosAu.y / GALAXY_UNIT_TO_AU, camTruePosAu.z / GALAXY_UNIT_TO_AU)
+      mat.uniforms.uLayerAlpha.value = layerAlpha
+    },
+  }
+}

@@ -8,7 +8,7 @@ export interface Focusable {
   minApproachAu: number
 }
 
-const MAX_DIST_AU = 5e9 // ~24 kpc, beyond the whole star catalog
+const MAX_DIST_AU = 3e16 // ~145 Mpc, beyond the whole galaxy catalog
 
 export class FocusOrbitControls {
   focus: Focusable

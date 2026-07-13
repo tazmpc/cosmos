@@ -5,6 +5,8 @@ import { createSolarSystem, updatePositions, repositionMeshes, type PlanetNode }
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, type StarField } from './scene/starField'
+import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
+import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
 import { apparentMagnitude } from './data/starMath'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
@@ -40,6 +42,11 @@ loadStarField(engine.scene)
     setupSearch(searchEntries)
   })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
+
+let galaxies: GalaxyField | null = null
+loadGalaxyField(engine.scene)
+  .then(g => { galaxies = g })
+  .catch(() => showBanner('Galaxy catalog failed to load.'))
 
 export function planetFocusable(n: PlanetNode): Focusable {
   return {
@@ -158,7 +165,9 @@ function frame(realMs: number) {
   clock.tick(realMs)
   updatePositions(planets, clock.now())
   controls.getCameraTruePos(camTruePos)
-  stars?.update(camTruePos)
+  const la = layerAlphas(camTruePos.length())
+  stars?.update(camTruePos, la.stars)
+  galaxies?.update(camTruePos, la.galaxies)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
   controls.applyToCamera(engine.camera)

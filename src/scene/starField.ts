@@ -6,17 +6,28 @@ export interface StarField {
   points: THREE.Points
   catalog: StarCatalog
   names: Record<string, number>
-  /** Call each frame with the camera's true heliocentric position in AU. */
-  update(camTruePosAu: THREE.Vector3): void
+  /** Call each frame with the camera's true heliocentric position in AU, and this layer's crossfade alpha (0..1). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
 }
 
-const PC_TO_AU = 206264.806
+/** Configures a point-cloud layer (stars, galaxies, …) sharing the same shader. */
+export interface PointLayerConfig {
+  unitToAu: number  // conversion factor from the catalog's position units to AU (e.g. parsecs or megaparsecs)
+  scale: number      // point size scale
+  faintMag: number   // apparent mag at/below which a point is full-alpha; fainter points fade toward the discard cutoff
+  minSize: number
+  maxSize: number
+}
 
 const VERT = /* glsl */ `
-  uniform vec3 uCamPc;       // camera position, parsecs
+  uniform vec3 uCamPc;       // camera position, in catalog position units
+  uniform float uUnitToAu;   // catalog position units -> AU
   uniform float uScale;      // point size scale
-  uniform float uFaintMag;   // apparent mag at/below which a star is full-alpha; fainter stars fade toward the discard cutoff
+  uniform float uFaintMag;   // apparent mag at/below which a point is full-alpha; fainter points fade toward the discard cutoff
+  uniform float uMinSize;
+  uniform float uMaxSize;
   uniform float uPixelRatio;
+  uniform float uLayerAlpha;
   attribute float absMag;
   attribute vec3 starColor;
   varying vec3 vColor;
@@ -26,16 +37,16 @@ const VERT = /* glsl */ `
   #include <logdepthbuf_pars_vertex>
 
   void main() {
-    vec3 relAu = (position - uCamPc) * ${PC_TO_AU.toFixed(3)};
+    vec3 relAu = (position - uCamPc) * uUnitToAu;
     vec4 mv = modelViewMatrix * vec4(relAu, 1.0);
     gl_Position = projectionMatrix * mv;
 
     #include <logdepthbuf_vertex>
 
-    float distPc = max(length(position - uCamPc), 1e-6);
-    float appMag = absMag + 5.0 * (log(distPc) / 2.302585 - 1.0);
-    gl_PointSize = clamp(uScale * pow(10.0, -0.2 * appMag), 0.75, 14.0) * uPixelRatio;
-    vAlpha = clamp(pow(10.0, -0.4 * (appMag - uFaintMag)), 0.0, 1.0);
+    float distUnits = max(length(position - uCamPc), 1e-6);
+    float appMag = absMag + 5.0 * (log(distUnits) / 2.302585 - 1.0);
+    gl_PointSize = clamp(uScale * pow(10.0, -0.2 * appMag), uMinSize, uMaxSize) * uPixelRatio;
+    vAlpha = clamp(pow(10.0, -0.4 * (appMag - uFaintMag)), 0.0, 1.0) * uLayerAlpha;
     vColor = starColor;
   }
 `
@@ -57,12 +68,8 @@ const FRAG = /* glsl */ `
   }
 `
 
-export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
-  const [binRes, namesRes] = await Promise.all([fetch('/stars.bin'), fetch('/starnames.json')])
-  if (!binRes.ok || !namesRes.ok) throw new Error('star catalog fetch failed')
-  const catalog = decodeCatalog(await binRes.arrayBuffer())
-  const names = (await namesRes.json()) as Record<string, number>
-
+/** Builds the shared position/absMag/color geometry for a CSMS-format point catalog (stars or galaxies). */
+export function buildPointGeometry(catalog: StarCatalog): THREE.BufferGeometry {
   const colors = new Float32Array(catalog.count * 3)
   for (let i = 0; i < catalog.count; i++) {
     const [r, g, b] = colorIndexToRgb(catalog.colorIndex[i])
@@ -73,19 +80,40 @@ export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
   geo.setAttribute('position', new THREE.BufferAttribute(catalog.positions, 3))
   geo.setAttribute('absMag', new THREE.BufferAttribute(catalog.absMag, 1))
   geo.setAttribute('starColor', new THREE.BufferAttribute(colors, 3))
+  return geo
+}
 
-  const mat = new THREE.ShaderMaterial({
+export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
     uniforms: {
       uCamPc: { value: new THREE.Vector3() },
-      uScale: { value: 9.0 },
-      uFaintMag: { value: 6.5 },
+      uUnitToAu: { value: cfg.unitToAu },
+      uScale: { value: cfg.scale },
+      uFaintMag: { value: cfg.faintMag },
+      uMinSize: { value: cfg.minSize },
+      uMaxSize: { value: cfg.maxSize },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uLayerAlpha: { value: 1.0 },
     },
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
+  })
+}
+
+const STAR_UNIT_TO_AU = 206264.806
+
+export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
+  const [binRes, namesRes] = await Promise.all([fetch('/stars.bin'), fetch('/starnames.json')])
+  if (!binRes.ok || !namesRes.ok) throw new Error('star catalog fetch failed')
+  const catalog = decodeCatalog(await binRes.arrayBuffer())
+  const names = (await namesRes.json()) as Record<string, number>
+
+  const geo = buildPointGeometry(catalog)
+  const mat = makePointMaterial({
+    unitToAu: STAR_UNIT_TO_AU, scale: 9, faintMag: 6.5, minSize: 0.75, maxSize: 14,
   })
 
   const points = new THREE.Points(geo, mat)
@@ -95,9 +123,10 @@ export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
 
   return {
     points, catalog, names,
-    update(camTruePosAu) {
+    update(camTruePosAu, layerAlpha = 1) {
       ;(mat.uniforms.uCamPc.value as THREE.Vector3)
-        .set(camTruePosAu.x / PC_TO_AU, camTruePosAu.y / PC_TO_AU, camTruePosAu.z / PC_TO_AU)
+        .set(camTruePosAu.x / STAR_UNIT_TO_AU, camTruePosAu.y / STAR_UNIT_TO_AU, camTruePosAu.z / STAR_UNIT_TO_AU)
+      mat.uniforms.uLayerAlpha.value = layerAlpha
     },
   }
 }
