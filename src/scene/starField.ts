@@ -15,7 +15,7 @@ const PC_TO_AU = 206264.806
 const VERT = /* glsl */ `
   uniform vec3 uCamPc;       // camera position, parsecs
   uniform float uScale;      // point size scale
-  uniform float uFaintMag;   // apparent mag at which alpha reaches ~0
+  uniform float uFaintMag;   // apparent mag at/below which a star is full-alpha; fainter stars fade toward the discard cutoff
   uniform float uPixelRatio;
   attribute float absMag;
   attribute vec3 starColor;
