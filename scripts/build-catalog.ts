@@ -27,7 +27,8 @@ for (let i = 1; i < csv.length; i++) {
   const index = pos.length / 3
   pos.push(x, y, z)
   absMag.push(parseFloat(f[cAbs]))
-  ci.push(parseFloat(f[cCi]) || 0.5)
+  const ciParsed = parseFloat(f[cCi])
+  ci.push(Number.isNaN(ciParsed) ? 0.5 : ciParsed)
   const proper = f[cProper].replace(/^"|"$/g, '').trim()
   const bayer = f[cBf].replace(/^"|"$/g, '').trim()
   if (proper) names[proper] = index
