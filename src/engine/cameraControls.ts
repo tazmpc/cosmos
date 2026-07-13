@@ -30,10 +30,13 @@ export class FocusOrbitControls {
       if (!this.dragging) return
       this.yaw -= (e.clientX - this.lastX) * 0.005
       this.pitch += (e.clientY - this.lastY) * 0.005
-      this.pitch = Math.max(-1.55, Math.min(1.55, this.pitch))
+      // ±1.52 rad ≈ 87.1°: lookAt-based orientation becomes roll-unstable as the view direction approaches camera.up (+Z)
+      this.pitch = Math.max(-1.52, Math.min(1.52, this.pitch))
       this.lastX = e.clientX; this.lastY = e.clientY
     })
     canvas.addEventListener('pointerup', () => { this.dragging = false })
+    canvas.addEventListener('pointercancel', () => { this.dragging = false })
+    canvas.addEventListener('lostpointercapture', () => { this.dragging = false })
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault()
       // zoom speed proportional to current distance: works at every scale
