@@ -1,25 +1,39 @@
 import * as THREE from 'three'
 import { createEngine } from './engine/renderer'
-import { createSolarSystem, updateSolarSystem } from './scene/solarSystem'
+import { FocusOrbitControls, type Focusable } from './engine/cameraControls'
+import { createSolarSystem, updatePositions, repositionMeshes, type PlanetNode } from './scene/solarSystem'
 import { SimClock } from './sim/clock'
+import { formatDistance } from './ui/format'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
-const planets = createSolarSystem(engine.scene)
+const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 
-// temporary: hover 40 planet-radii from Earth looking at it
+export function planetFocusable(n: PlanetNode): Focusable {
+  return {
+    name: n.def.name,
+    getPosition: (out) => out.copy(n.truePos),
+    minApproachAu: n.def.radiusAu * 1.4,
+  }
+}
+
+const earth = planets.find(p => p.def.id === 'earth')!
+const controls = new FocusOrbitControls(
+  engine.renderer.domElement, planetFocusable(earth), earth.def.radiusAu * 40)
+
+const hudName = document.querySelector('#hud .focus-name')!
+const hudDist = document.querySelector('#hud .focus-dist')!
 const camTruePos = new THREE.Vector3()
 
 function frame(realMs: number) {
   clock.tick(realMs)
-  const date = clock.now()
+  updatePositions(planets, clock.now())
+  controls.getCameraTruePos(camTruePos)
+  repositionMeshes(planets, sunLight, camTruePos)
+  controls.applyToCamera(engine.camera)
 
-  const earth = planets.find(p => p.def.id === 'earth')!
-  updateSolarSystem(planets, engine.scene, date, camTruePos) // first pass to get truePos
-  camTruePos.copy(earth.truePos).add(new THREE.Vector3(0, -earth.def.radiusAu * 40, earth.def.radiusAu * 10))
-  updateSolarSystem(planets, engine.scene, date, camTruePos) // re-express relative to camera
-  engine.camera.position.set(0, 0, 0)
-  engine.camera.lookAt(earth.mesh.position)
+  hudName.textContent = controls.focus.name
+  hudDist.textContent = formatDistance(controls.distance)
 
   engine.renderer.render(engine.scene, engine.camera)
   requestAnimationFrame(frame)

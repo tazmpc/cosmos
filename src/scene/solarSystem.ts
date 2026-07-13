@@ -8,7 +8,7 @@ export interface PlanetNode {
   truePos: THREE.Vector3 // heliocentric EQJ AU, double precision (JS numbers)
 }
 
-export function createSolarSystem(scene: THREE.Scene): PlanetNode[] {
+export function createSolarSystem(scene: THREE.Scene): { nodes: PlanetNode[]; sunLight: THREE.PointLight } {
   const loader = new THREE.TextureLoader()
   const nodes: PlanetNode[] = []
 
@@ -32,16 +32,19 @@ export function createSolarSystem(scene: THREE.Scene): PlanetNode[] {
   sunLight.name = 'sunLight'
   scene.add(sunLight)
 
-  return nodes
+  return { nodes, sunLight }
 }
 
-/** Recompute true positions for the sim date and re-express everything camera-relative. */
-export function updateSolarSystem(nodes: PlanetNode[], scene: THREE.Scene, date: Date, camTruePos: THREE.Vector3): void {
+/** Recompute true heliocentric positions for the sim date. */
+export function updatePositions(nodes: PlanetNode[], date: Date): void {
   for (const n of nodes) {
     const p = bodyPosition(n.def.id, date)
     n.truePos.set(p.x, p.y, p.z)
-    n.mesh.position.copy(n.truePos).sub(camTruePos) // floating origin
   }
-  const light = scene.getObjectByName('sunLight') as THREE.PointLight
-  light.position.set(-camTruePos.x, -camTruePos.y, -camTruePos.z) // Sun is at heliocentric origin
+}
+
+/** Re-express meshes and sun light camera-relative (floating origin). */
+export function repositionMeshes(nodes: PlanetNode[], sunLight: THREE.PointLight, camTruePos: THREE.Vector3): void {
+  for (const n of nodes) n.mesh.position.copy(n.truePos).sub(camTruePos)
+  sunLight.position.set(-camTruePos.x, -camTruePos.y, -camTruePos.z)
 }
