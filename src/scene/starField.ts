@@ -22,6 +22,7 @@ const VERT = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
 
+  #include <common>
   #include <logdepthbuf_pars_vertex>
 
   void main() {
@@ -43,6 +44,7 @@ const FRAG = /* glsl */ `
   varying vec3 vColor;
   varying float vAlpha;
 
+  #include <common>
   #include <logdepthbuf_pars_fragment>
 
   void main() {
