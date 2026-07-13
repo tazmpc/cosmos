@@ -9,9 +9,11 @@ import { showBanner } from './ui/banner'
 import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
 import { PC_TO_AU, starFocusable } from './scene/starFocus'
+import { setupTimeControls } from './ui/timeControls'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
+setupTimeControls(clock)
 const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 
 let stars: StarField | null = null
