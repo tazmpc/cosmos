@@ -4,7 +4,7 @@ import { FocusOrbitControls, type Focusable } from './engine/cameraControls'
 import { createSolarSystem, updatePositions, repositionMeshes, type PlanetNode } from './scene/solarSystem'
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
-import { loadStarField, type StarField } from './scene/starField'
+import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
 import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
@@ -47,6 +47,25 @@ let galaxies: GalaxyField | null = null
 loadGalaxyField(engine.scene)
   .then(g => { galaxies = g })
   .catch(() => showBanner('Galaxy catalog failed to load.'))
+
+// Milky Way bridge layer — real Gaia sky-plane density, modeled depth. Optional garnish: no
+// loading banner and no error banner on failure, just a console warning.
+//
+// faintMag verified live at 14 (spec text suggested 9). Each point represents a single
+// Sun-like unresolved star (absMag 0-10, generated in build-milkyway.ts), not a real-sky
+// diffuse glow. At faintMag=9, the per-point apparent-magnitude falloff discards nearly
+// everything beyond ~1kpc of the CAMERA (not the Sun) — since the 2M points spread across
+// a 30kpc sphere around the Sun, from any vantage point only a handful end up within that
+// radius, so the layer renders as an almost-empty frame instead of the band/disk the spec
+// calls for. Raised to 14 so points stay visible out to camera distances spanning most of
+// the cloud; confirmed at HUD ~42,000 ly this reproduces a clear edge-on Milky Way band /
+// central bulge silhouette as intended.
+let milkyWay: PointLayer | null = null
+loadPointLayer(engine.scene, '/milkyway.bin', {
+  unitToAu: 206264.806, unitToPc: 1, scale: 6, faintMag: 14, alphaCap: 0.6, minSize: 0.75, maxSize: 4,
+})
+  .then(m => { milkyWay = m })
+  .catch((err) => console.warn('Milky Way layer failed to load:', err))
 
 export function planetFocusable(n: PlanetNode): Focusable {
   return {
@@ -167,6 +186,7 @@ function frame(realMs: number) {
   controls.getCameraTruePos(camTruePos)
   const la = layerAlphas(camTruePos.length())
   stars?.update(camTruePos, la.stars)
+  milkyWay?.update(camTruePos, la.milkyWay)
   galaxies?.update(camTruePos, la.galaxies)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)

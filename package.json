@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run --passWithNoTests",
     "catalog": "tsx scripts/build-catalog.ts",
-    "galaxies": "tsx scripts/build-galaxies.ts"
+    "galaxies": "tsx scripts/build-galaxies.ts",
+    "milkyway": "tsx scripts/build-milkyway.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

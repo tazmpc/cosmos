@@ -112,28 +112,49 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
 
 const STAR_UNIT_TO_AU = 206264.806
 
-export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
-  const [binRes, namesRes] = await Promise.all([fetch('/stars.bin'), fetch('/starnames.json')])
-  if (!binRes.ok || !namesRes.ok) throw new Error('star catalog fetch failed')
+export interface PointLayer {
+  points: THREE.Points
+  catalog: StarCatalog
+  /** Call each frame with the camera's true heliocentric position in AU, and this layer's crossfade alpha (0..1). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
+}
+
+/** Fetches a CSMS-format point catalog from `url` and builds a shader-driven Points layer sharing
+ * the star/galaxy/Milky Way point shader. Reused by loadStarField (which adds the names sidecar)
+ * and any other bare point-cloud layer (e.g. the Milky Way bridge layer). */
+export async function loadPointLayer(scene: THREE.Scene, url: string, config: PointLayerConfig): Promise<PointLayer> {
+  const binRes = await fetch(url)
+  if (!binRes.ok) throw new Error(`${url} fetch failed`)
   const catalog = decodeCatalog(await binRes.arrayBuffer())
-  const names = (await namesRes.json()) as Record<string, number>
 
   const geo = buildPointGeometry(catalog)
-  const mat = makePointMaterial({
-    unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
-  })
+  const mat = makePointMaterial(config)
 
   const points = new THREE.Points(geo, mat)
   points.frustumCulled = false // shader-space positions; three's culling would use wrong bounds
   points.matrixAutoUpdate = false
   scene.add(points)
 
+  const unitToAu = config.unitToAu
   return {
-    points, catalog, names,
+    points, catalog,
     update(camTruePosAu, layerAlpha = 1) {
       ;(mat.uniforms.uCamPc.value as THREE.Vector3)
-        .set(camTruePosAu.x / STAR_UNIT_TO_AU, camTruePosAu.y / STAR_UNIT_TO_AU, camTruePosAu.z / STAR_UNIT_TO_AU)
+        .set(camTruePosAu.x / unitToAu, camTruePosAu.y / unitToAu, camTruePosAu.z / unitToAu)
       mat.uniforms.uLayerAlpha.value = layerAlpha
     },
   }
+}
+
+export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
+  const [layer, namesRes] = await Promise.all([
+    loadPointLayer(scene, '/stars.bin', {
+      unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
+    }),
+    fetch('/starnames.json'),
+  ])
+  if (!namesRes.ok) throw new Error('star names fetch failed')
+  const names = (await namesRes.json()) as Record<string, number>
+
+  return { ...layer, names }
 }
