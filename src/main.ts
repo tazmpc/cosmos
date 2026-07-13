@@ -5,7 +5,9 @@ import { createSolarSystem, updatePositions, repositionMeshes, type PlanetNode }
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, type StarField } from './scene/starField'
-import { showBanner } from './ui/banner'
+import { showBanner, hideBanner } from './ui/banner'
+import { apparentMagnitude } from './data/starMath'
+import { createOrbitLines, updateOrbitLines } from './scene/orbits'
 import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
 import { PC_TO_AU, starFocusable } from './scene/starFocus'
@@ -16,20 +18,23 @@ const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
 setupTimeControls(clock)
 const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
+const orbits = createOrbitLines(engine.scene, clock.now())
 
 let stars: StarField | null = null
+showBanner('Loading star catalog…')
 loadStarField(engine.scene)
   .then(s => {
     stars = s
+    hideBanner()
     const searchEntries: SearchEntry[] = [
       ...planets.map(p => ({ name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30 })),
       ...Object.entries(s.names).map(([name, idx]) => ({
         name, kind: 'star' as const, key: idx,
         // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
-        mag: s.catalog.absMag[idx] + 5 * (Math.log10(Math.hypot(
+        mag: apparentMagnitude(s.catalog.absMag[idx], Math.hypot(
           s.catalog.positions[idx * 3],
           s.catalog.positions[idx * 3 + 1],
-          s.catalog.positions[idx * 3 + 2])) - 1),
+          s.catalog.positions[idx * 3 + 2])),
       })),
     ]
     setupSearch(searchEntries)
@@ -155,6 +160,7 @@ function frame(realMs: number) {
   controls.getCameraTruePos(camTruePos)
   stars?.update(camTruePos)
   repositionMeshes(planets, sunLight, camTruePos)
+  updateOrbitLines(orbits, camTruePos)
   controls.applyToCamera(engine.camera)
 
   hudName.textContent = controls.focus.name

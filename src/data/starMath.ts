@@ -10,3 +10,8 @@ export function raDecDistToXyz(raHours: number, decDeg: number, distPc: number):
 export function absoluteMagnitude(apparentMag: number, distPc: number): number {
   return apparentMag - 5 * (Math.log10(distPc) - 1)
 }
+
+/** Absolute → apparent magnitude at dist parsecs (inverse of absoluteMagnitude). */
+export function apparentMagnitude(absMag: number, distPc: number): number {
+  return absMag + 5 * (Math.log10(distPc) - 1)
+}

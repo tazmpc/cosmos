@@ -13,6 +13,13 @@ export function createEngine(container: HTMLElement): Engine {
   renderer.outputColorSpace = THREE.SRGBColorSpace
   container.appendChild(renderer.domElement)
 
+  renderer.domElement.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault()
+    const el = document.getElementById('banner')!
+    el.textContent = 'Graphics context lost — reload the page to continue.'
+    el.style.display = 'block'
+  })
+
   const scene = new THREE.Scene()
   scene.background = new THREE.Color(0x000004)
 

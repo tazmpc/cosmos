@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { PLANETS, type PlanetDef } from '../data/planets'
 import { bodyPosition } from '../sim/ephemeris'
+import { addSaturnRings } from './rings'
 
 export interface PlanetNode {
   def: PlanetDef
@@ -25,6 +26,20 @@ export function createSolarSystem(scene: THREE.Scene): { nodes: PlanetNode[]; su
     mesh.rotation.x = Math.PI / 2 // sphere poles → +Z (EQJ north)
     mesh.userData.planetId = def.id
     scene.add(mesh)
+    if (def.id === 'saturn') addSaturnRings(mesh)
+    if (def.id === 'sun') {
+      const c = document.createElement('canvas'); c.width = c.height = 128
+      const ctx = c.getContext('2d')!
+      const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
+      g.addColorStop(0, 'rgba(255,240,210,0.9)'); g.addColorStop(0.3, 'rgba(255,200,120,0.35)')
+      g.addColorStop(1, 'rgba(255,180,80,0)')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128)
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false,
+      }))
+      sprite.scale.setScalar(def.radiusAu * 6)
+      mesh.add(sprite)
+    }
     nodes.push({ def, mesh, truePos: new THREE.Vector3() })
   }
 

@@ -1,5 +1,6 @@
 import type { PlanetDef } from '../data/planets'
 import type { StarCatalog } from '../data/catalogFormat'
+import { apparentMagnitude } from '../data/starMath'
 
 const PC_TO_LY = 3.26156
 
@@ -11,7 +12,7 @@ export function showStarCard(catalog: StarCatalog, index: number, name: string):
   const x = catalog.positions[index * 3], y = catalog.positions[index * 3 + 1], z = catalog.positions[index * 3 + 2]
   const distPc = Math.hypot(x, y, z)
   const absMag = catalog.absMag[index]
-  const appMag = absMag + 5 * (Math.log10(distPc) - 1)
+  const appMag = apparentMagnitude(absMag, distPc)
   const ci = catalog.colorIndex[index]
   render(name, {
     'Distance from Sun': `${(distPc * PC_TO_LY).toFixed(1)} ly`,

@@ -4,3 +4,7 @@ export function showBanner(msg: string): void {
   el.style.display = 'block'
   el.onclick = () => { el.style.display = 'none' }
 }
+
+export function hideBanner(): void {
+  document.getElementById('banner')!.style.display = 'none'
+}
