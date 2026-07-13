@@ -18,7 +18,7 @@ export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> 
 
   const geo = buildPointGeometry(catalog)
   const mat = makePointMaterial({
-    unitToAu: GALAXY_UNIT_TO_AU, scale: 60, faintMag: 20, minSize: 1.5, maxSize: 9,
+    unitToAu: GALAXY_UNIT_TO_AU, unitToPc: 1e6, scale: 1600, faintMag: 15, alphaCap: 0.45, minSize: 1.5, maxSize: 8,
   })
 
   const points = new THREE.Points(geo, mat)

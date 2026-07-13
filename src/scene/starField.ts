@@ -13,8 +13,10 @@ export interface StarField {
 /** Configures a point-cloud layer (stars, galaxies, …) sharing the same shader. */
 export interface PointLayerConfig {
   unitToAu: number  // conversion factor from the catalog's position units to AU (e.g. parsecs or megaparsecs)
+  unitToPc: number  // conversion factor from the catalog's position units to parsecs (true apparent magnitude)
   scale: number      // point size scale
   faintMag: number   // apparent mag at/below which a point is full-alpha; fainter points fade toward the discard cutoff
+  alphaCap: number   // max intrinsic alpha before the LOD crossfade multiply; <1 tames additive saturation
   minSize: number
   maxSize: number
 }
@@ -22,8 +24,10 @@ export interface PointLayerConfig {
 const VERT = /* glsl */ `
   uniform vec3 uCamPc;       // camera position, in catalog position units
   uniform float uUnitToAu;   // catalog position units -> AU
+  uniform float uUnitToPc;   // catalog position units -> parsecs (true apparent magnitude)
   uniform float uScale;      // point size scale
   uniform float uFaintMag;   // apparent mag at/below which a point is full-alpha; fainter points fade toward the discard cutoff
+  uniform float uAlphaCap;   // max intrinsic alpha; <1 tames additive saturation in dense layers
   uniform float uMinSize;
   uniform float uMaxSize;
   uniform float uPixelRatio;
@@ -44,9 +48,10 @@ const VERT = /* glsl */ `
     #include <logdepthbuf_vertex>
 
     float distUnits = max(length(position - uCamPc), 1e-6);
-    float appMag = absMag + 5.0 * (log(distUnits) / 2.302585 - 1.0);
+    float appMag = absMag + 5.0 * (log(distUnits * uUnitToPc) / 2.302585 - 1.0);
     gl_PointSize = clamp(uScale * pow(10.0, -0.2 * appMag), uMinSize, uMaxSize) * uPixelRatio;
-    vAlpha = clamp(pow(10.0, -0.4 * (appMag - uFaintMag)), 0.0, 1.0) * uLayerAlpha;
+    vAlpha = clamp(pow(10.0, -0.4 * (appMag - uFaintMag)), 0.0, 1.0);
+    vAlpha = min(vAlpha, uAlphaCap) * uLayerAlpha;
     vColor = starColor;
   }
 `
@@ -90,8 +95,10 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
     uniforms: {
       uCamPc: { value: new THREE.Vector3() },
       uUnitToAu: { value: cfg.unitToAu },
+      uUnitToPc: { value: cfg.unitToPc },
       uScale: { value: cfg.scale },
       uFaintMag: { value: cfg.faintMag },
+      uAlphaCap: { value: cfg.alphaCap },
       uMinSize: { value: cfg.minSize },
       uMaxSize: { value: cfg.maxSize },
       uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
@@ -113,7 +120,7 @@ export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
 
   const geo = buildPointGeometry(catalog)
   const mat = makePointMaterial({
-    unitToAu: STAR_UNIT_TO_AU, scale: 9, faintMag: 6.5, minSize: 0.75, maxSize: 14,
+    unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
   })
 
   const points = new THREE.Points(geo, mat)
