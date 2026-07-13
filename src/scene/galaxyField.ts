@@ -25,6 +25,7 @@ export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> 
   const points = new THREE.Points(geo, mat)
   points.frustumCulled = false // shader-space positions; three's culling would use wrong bounds
   points.matrixAutoUpdate = false
+  points.visible = mat.uniforms.uLayerAlpha.value > 0.002 // consistent with the default uLayerAlpha (1.0)
   scene.add(points)
 
   return {
@@ -33,6 +34,10 @@ export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> 
       ;(mat.uniforms.uCamPc.value as THREE.Vector3)
         .set(camTruePosAu.x / GALAXY_UNIT_TO_AU, camTruePosAu.y / GALAXY_UNIT_TO_AU, camTruePosAu.z / GALAXY_UNIT_TO_AU)
       mat.uniforms.uLayerAlpha.value = layerAlpha
+      // Below-threshold layers cost full vertex work every frame even at alpha 0 (no per-point
+      // gating in the shader) — three.js skips the draw call entirely when a Points is invisible,
+      // so this is the actual perf win, not just a visual nicety.
+      points.visible = layerAlpha > 0.002
     },
   }
 }

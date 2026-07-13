@@ -6,6 +6,7 @@ import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
+import { createGalaxySprites } from './scene/galaxySprites'
 import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
 import { apparentMagnitude } from './data/starMath'
@@ -53,6 +54,11 @@ let galaxies: GalaxyField | null = null
 loadGalaxyField(engine.scene)
   .then(g => { galaxies = g })
   .catch(() => showBanner('Galaxy catalog failed to load.'))
+
+// Curated galaxies (M31/Andromeda, M33, …) rendered as landmark glow sprites on top of the bulk
+// galaxies.bin point cloud — that catalog's redshift pipeline correctly omits the (blueshifted)
+// Local Group, so without this, flying to Andromeda arrives at visually empty space.
+const galaxySprites = createGalaxySprites(engine.scene)
 
 // Milky Way bridge layer — real Gaia sky-plane density, modeled depth. Optional garnish: no
 // loading banner and no error banner on failure, just a console warning.
@@ -197,6 +203,7 @@ function frame(realMs: number) {
   stars?.update(camTruePos, la.stars)
   milkyWay?.update(camTruePos, la.milkyWay)
   galaxies?.update(camTruePos, la.galaxies)
+  galaxySprites.update(camTruePos, la.galaxies)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
   controls.applyToCamera(engine.camera)
