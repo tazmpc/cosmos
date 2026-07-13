@@ -9,16 +9,26 @@ publicly available data.
 ## Goals (v1)
 
 - Continuous 3D fly-through from Earth's surface scale out to interstellar space.
-- Real data everywhere: planet positions correct for the current date, every visible
+- Real data everywhere: planet positions correct for the simulated date, every visible
   star a real catalog star with a true 3D position.
 - Search-and-fly-to: type "Jupiter" or "Sirius", the camera flies there smoothly.
+- Time controls: scrub/accelerate the simulation clock and watch planets orbit.
+- Object info cards: click a planet or star → panel with real catalog data
+  (distance, magnitude, spectral class/color, orbital facts for planets).
+- Star catalog target: ~1M brightest Gaia DR3 stars (HYG ~120k as the fallback the
+  build script supports from day one).
 - Runs at 60 fps in a browser on the M4 MacBook; no backend.
 
-## Non-goals (v1)
+## Later phases (in this roadmap, not descoped — see Milestones)
 
-- Galaxies, cosmic web, deep-sky imagery (v2 — the architecture must not preclude them).
-- Time controls / orbit animation, object info cards, sky-view mode (deferred features
-  from brainstorming; design leaves room for all three).
+- Galaxies + cosmic web (SDSS/2MASS redshift surveys as a second point cloud with LOD).
+- Milky Way structure between the local stars and the galaxy field.
+- Deep-sky imagery via HiPS tile streaming; sky-view ("stand on Earth, look up") mode.
+- The v1 architecture must not preclude any of these (floating origin + doubles
+  already cover the distance scales involved).
+
+## Non-goals
+
 - Mobile support, accounts, sharing.
 
 ## Architecture
@@ -32,9 +42,9 @@ Modules (each independently testable, communicating through typed interfaces):
 | Module | Responsibility | Depends on |
 |--------|----------------|------------|
 | `engine/` | Three.js renderer, camera controller, floating-origin transform, log depth buffer | Three.js |
-| `sim/` | Simulation clock; planet/Moon/Sun positions via `astronomy-engine` | astronomy-engine |
+| `sim/` | Simulation clock (settable date, rate multiplier ±, pause); planet/Moon/Sun positions via `astronomy-engine` | astronomy-engine |
 | `data/` | Star catalog binary loader; planet definitions (radii, textures, names) | — |
-| `ui/` | Search box + fuzzy matching, fly-to triggers, HUD (focus name, distance) | engine, data |
+| `ui/` | Search box + fuzzy matching, fly-to triggers, HUD (focus name, distance, sim date), time controls (pause / rate slider / reset-to-now), object info cards | engine, sim, data |
 
 `main.ts` wires them: data loads → sim computes positions → engine renders → ui drives
 camera.
@@ -59,10 +69,13 @@ galaxy scale (gigaparsecs) without rework.
 
 | Data | Source | License | Delivery |
 |------|--------|---------|----------|
-| Planet/Moon/Sun positions | `astronomy-engine` npm package | MIT | computed live, correct for current date |
+| Planet/Moon/Sun positions | `astronomy-engine` npm package | MIT | computed live for the simulated date |
 | Planet imagery | NASA/USGS maps; Solar System Scope texture set as fallback | public domain / CC-BY 4.0 | build-time resize → web textures in `public/` |
-| Stars (~120k) | HYG catalog v3 (Hipparcos + Yale + Gliese merge: positions, parallax, magnitude, color index, proper names, Bayer designations) | public domain (CC0) | build script: CSV → compact binary (~3 MB) |
-| v1.5 upgrade path | Gaia DR3 via ESA TAP/ADQL (brightest ~1M stars) | free/open | same binary format, bigger file |
+| Stars, bootstrap (~120k) | HYG catalog v3 (Hipparcos + Yale + Gliese merge: positions, parallax, magnitude, color index, proper names, Bayer designations) | public domain (CC0) | build script: CSV → compact binary (~3 MB) |
+| Stars, v1 target (~1M) | Gaia DR3 via ESA TAP/ADQL (brightest ~1M by G magnitude), cross-matched with HYG for proper names | free/open | same build script + binary format, ~20 MB |
+| Object info cards | fields already in the star binary/sidecar + a small curated planet-facts JSON | public domain | bundled |
+| Galaxies (phase 6) | SDSS DR18 / 2MASS XSC redshift catalogs → comoving 3D positions | free/open | same binary pipeline, second point cloud |
+| Deep-sky imagery (phase 7) | HiPS tile services (CDS/Aladin: DSS2, SDSS, etc.) | free/open | streamed tiles at runtime |
 
 ### Star catalog binary format
 
@@ -110,9 +123,9 @@ directly into typed arrays consumed by the GPU point cloud; no per-star JS objec
 
 ## Performance budget
 
-- 120k point sprites + ~10 textured spheres: trivial for the M4; target 60 fps with
-  headroom for the 1M-star Gaia upgrade.
-- Catalog binary ~3 MB (v1), ~25 MB (v1.5) — streamed, not blocking first render.
+- 1M point sprites + ~10 textured spheres: well within the M4's budget; target 60 fps.
+- Catalog binary ~3 MB (HYG bootstrap) / ~20 MB (Gaia v1 target) — streamed, never
+  blocking first render.
 
 ## Testing
 
@@ -125,17 +138,31 @@ Vitest unit tests on everything mathematical (where silent bugs live):
 - **Fly-to math:** easing hits exact endpoints; log-space midpoint is the geometric
   mean of distances.
 - **Sim:** astronomy-engine wrapper returns Earth ≈ 1 AU from Sun; Moon ≈ 0.0026 AU
-  from Earth.
+  from Earth; clock honors pause/rate/set-date (advancing 1 sim-year moves Earth
+  ~back to its starting longitude).
 
 Rendering/UX verified by driving the app in the browser (dev server + browser tools).
 
 ## Milestones
 
+v1 = milestones 1–5. Each later phase gets its own plan when we reach it.
+
 1. **Scaffold + solar system:** Vite/TS/Three.js, floating-origin engine, textured
    planets at real current positions, orbit-the-focus camera. *Checkpoint: fly around
    Saturn.*
-2. **Stars:** catalog build script, binary loader, point-cloud shader. *Checkpoint:
-   recognizable constellations from Earth's position; fly out and watch them distort.*
+2. **Stars:** catalog build script (HYG first, Gaia DR3 extract once the pipeline
+   works), binary loader, point-cloud shader. *Checkpoint: recognizable
+   constellations from Earth's position; fly out and watch them distort.*
 3. **Search + fly-to + HUD:** fuzzy search, animated fly-to, focus/distance readout,
    click-to-refocus. *Checkpoint: search "Sirius", arrive at Sirius.*
-4. **Polish:** orbit lines, Saturn's rings, loading states, error banners, perf pass.
+4. **Time + info cards:** sim-clock UI (pause, rate multiplier up to ~1 yr/s,
+   reset-to-now, date readout), click → info card with real catalog/planet data.
+   *Checkpoint: watch the inner planets orbit; card for Betelgeuse shows distance and
+   color class.*
+5. **Polish (v1 ship):** orbit lines, Saturn's rings, loading states, error banners,
+   perf pass with the 1M-star catalog.
+6. **Galaxies + cosmic web:** SDSS/2MASS pipeline → second point cloud with LOD;
+   Milky Way structural model to bridge local stars → galaxy field. *Checkpoint: pull
+   back until the Milky Way is one dot among filaments.*
+7. **Imagery + sky view:** HiPS tile streaming near famous deep-sky objects;
+   stand-on-Earth sky-view mode with constellation lines.
