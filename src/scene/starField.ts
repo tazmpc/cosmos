@@ -147,14 +147,18 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
 }
 
 export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
-  const [layer, namesRes] = await Promise.all([
-    loadPointLayer(scene, '/stars.bin', {
-      unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
-    }),
-    fetch('/starnames.json'),
-  ])
+  // Fetch + parse the names sidecar BEFORE loadPointLayer: loadPointLayer adds the Points mesh
+  // to the scene as soon as stars.bin decodes, so if it ran concurrently with a names fetch
+  // that then failed, the whole load would reject while the mesh stayed orphaned in the scene
+  // (frozen at default uniforms, never updated or disposed). Sequencing guarantees nothing is
+  // added to the scene unless the entire layer load succeeds — worth the small parallelism loss.
+  const namesRes = await fetch('/starnames.json')
   if (!namesRes.ok) throw new Error('star names fetch failed')
   const names = (await namesRes.json()) as Record<string, number>
+
+  const layer = await loadPointLayer(scene, '/stars.bin', {
+    unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
+  })
 
   return { ...layer, names }
 }
