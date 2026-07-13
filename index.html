@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cosmos</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; background: #000; color: #cfd8e3;
+      font: 13px/1.45 -apple-system, "SF Pro Text", Helvetica, sans-serif; }
+    #app canvas { display: block; }
+    .panel { position: absolute; background: rgba(10, 14, 22, 0.82); border: 1px solid #26304040;
+      border-radius: 8px; padding: 10px 12px; backdrop-filter: blur(6px); }
+    #hud { left: 12px; bottom: 12px; min-width: 180px; }
+    #hud .focus-name { font-size: 15px; font-weight: 600; color: #fff; }
+    #search-wrap { top: 12px; left: 50%; transform: translateX(-50%); width: 320px; padding: 6px; }
+    #search { width: 100%; background: transparent; border: none; outline: none;
+      color: #fff; font-size: 14px; }
+    #search-results { list-style: none; margin-top: 4px; }
+    #search-results li { padding: 5px 6px; border-radius: 5px; cursor: pointer; }
+    #search-results li.sel, #search-results li:hover { background: #2b3548; }
+    #time-controls { right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; }
+    #time-controls button { background: #1a2230; color: #cfd8e3; border: 1px solid #2b3548;
+      border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+    #time-controls button:hover { background: #26304a; }
+    #sim-date { min-width: 150px; text-align: center; font-variant-numeric: tabular-nums; }
+    #info-card { top: 12px; right: 12px; width: 240px; display: none; }
+    #info-card h2 { font-size: 16px; color: #fff; margin-bottom: 6px; }
+    #info-card dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+    #info-card dt { color: #7f8ca0; }
+    #info-card .close { position: absolute; top: 6px; right: 9px; cursor: pointer; color: #7f8ca0; }
+    #banner { top: 12px; left: 12px; display: none; border-color: #7a4030; color: #ffb4a0; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="banner" class="panel"></div>
+  <div id="search-wrap" class="panel">
+    <input id="search" type="text" placeholder="Search — try Jupiter, Sirius, Vega…" autocomplete="off" />
+    <ul id="search-results"></ul>
+  </div>
+  <div id="hud" class="panel">
+    <div class="focus-name">—</div>
+    <div class="focus-dist">—</div>
+  </div>
+  <div id="time-controls" class="panel">
+    <button id="time-pause">⏸</button>
+    <button id="time-slower">−</button>
+    <span id="time-rate">real time</span>
+    <button id="time-faster">+</button>
+    <button id="time-now">Now</button>
+    <span id="sim-date"></span>
+  </div>
+  <div id="info-card" class="panel">
+    <span class="close">×</span>
+    <h2></h2>
+    <dl></dl>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
