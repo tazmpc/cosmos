@@ -10,6 +10,7 @@ import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
 import { PC_TO_AU, starFocusable } from './scene/starFocus'
 import { setupTimeControls } from './ui/timeControls'
+import { showPlanetCard, showStarCard } from './ui/infoCard'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
@@ -57,8 +58,10 @@ function focusEntry(e: SearchEntry): void {
   if (e.kind === 'planet') {
     const node = planets.find(p => p.def.id === e.key)!
     flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+    showPlanetCard(node.def)
   } else if (stars) {
     flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
+    showStarCard(stars.catalog, e.key as number, e.name)
   }
   ;(document.getElementById('search') as HTMLInputElement).value = ''
   renderResults([])
@@ -112,7 +115,10 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
   const hit = raycaster.intersectObjects(planets.map(p => p.mesh))[0]
   if (hit) {
     const node = planets.find(p => p.mesh === hit.object)!
-    if (node.def.name !== controls.focus.name) flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+    if (node.def.name !== controls.focus.name) {
+      flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+      showPlanetCard(node.def)
+    }
     return
   }
   if (!stars) return
@@ -131,7 +137,10 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
     const d2 = dx * dx + dy * dy
     if (d2 < 14 * 14 && (!best || d2 < best.d2)) best = { name, idx, d2 }
   }
-  if (best) flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
+  if (best) {
+    flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
+    showStarCard(stars.catalog, best.idx, best.name)
+  }
 })
 
 let lastMs = 0
