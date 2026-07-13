@@ -51,18 +51,17 @@ loadGalaxyField(engine.scene)
 // Milky Way bridge layer — real Gaia sky-plane density, modeled depth. Optional garnish: no
 // loading banner and no error banner on failure, just a console warning.
 //
-// faintMag verified live at 14 (spec text suggested 9). Each point represents a single
-// Sun-like unresolved star (absMag 0-10, generated in build-milkyway.ts), not a real-sky
-// diffuse glow. At faintMag=9, the per-point apparent-magnitude falloff discards nearly
-// everything beyond ~1kpc of the CAMERA (not the Sun) — since the 2M points spread across
-// a 30kpc sphere around the Sun, from any vantage point only a handful end up within that
-// radius, so the layer renders as an almost-empty frame instead of the band/disk the spec
-// calls for. Raised to 14 so points stay visible out to camera distances spanning most of
-// the cloud; confirmed at HUD ~42,000 ly this reproduces a clear edge-on Milky Way band /
-// central bulge silhouette as intended.
+// Rendered as unresolved surface-brightness GLOW, not as individually-real stars: the layer
+// must stay visible across 3 orders of magnitude of camera distance (inside the disk out to
+// ~181 kpc and beyond), and per-point apparent magnitude can't carry that — a synthetic
+// absMag-5 point at 181 kpc has appMag ≈ 26, alpha ≈ 0 at any sane faintMag. So faintMag 30
+// effectively disables the per-point magnitude fade (every point renders) and alphaCap 0.05
+// keeps each point subtle enough that 2M additively-blended points read as a soft glow whose
+// brightness IS the density map (the real Gaia sky data). layerAlphas still gates the whole
+// layer in/out by camera distance.
 let milkyWay: PointLayer | null = null
 loadPointLayer(engine.scene, '/milkyway.bin', {
-  unitToAu: 206264.806, unitToPc: 1, scale: 6, faintMag: 14, alphaCap: 0.6, minSize: 0.75, maxSize: 4,
+  unitToAu: 206264.806, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.05, minSize: 0.75, maxSize: 2,
 })
   .then(m => { milkyWay = m })
   .catch((err) => console.warn('Milky Way layer failed to load:', err))
