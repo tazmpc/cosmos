@@ -1,11 +1,19 @@
 import type { PlanetDef } from '../data/planets'
 import type { StarCatalog } from '../data/catalogFormat'
+import type { GalaxyDef } from '../data/galaxies'
 import { apparentMagnitude } from '../data/starMath'
-
-const PC_TO_LY = 3.26156
+import { PC_TO_LY } from '../data/units'
 
 export function showPlanetCard(def: PlanetDef): void {
   render(def.name, def.facts)
+}
+
+export function showGalaxyCard(def: GalaxyDef): void {
+  render(def.name, {
+    Distance: `${(def.distMpc * PC_TO_LY).toFixed(1)} Mly`,
+    Type: def.type,
+    ...def.facts,
+  })
 }
 
 export function showStarCard(catalog: StarCatalog, index: number, name: string): void {

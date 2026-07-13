@@ -1,5 +1,4 @@
-const KM_PER_AU = 149597870.7
-const AU_PER_LY = 63241.077
+import { KM_PER_AU, AU_PER_LY } from '../data/units'
 
 export function formatDistance(au: number): string {
   if (au < 0.01) return `${Math.round(au * KM_PER_AU).toLocaleString('en-US')} km`

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
+import { KM_PER_AU } from '../data/units'
 
-const KM = 1 / 149597870.7
+const KM = 1 / KM_PER_AU
 const INNER = 74500 * KM
 const OUTER = 140180 * KM
 

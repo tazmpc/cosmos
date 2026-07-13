@@ -1,4 +1,5 @@
 import type { BodyId } from '../sim/ephemeris'
+import { KM_PER_AU } from './units'
 
 export interface PlanetDef {
   id: BodyId
@@ -10,7 +11,7 @@ export interface PlanetDef {
   facts: Record<string, string>
 }
 
-const KM = 1 / 149597870.7
+const KM = 1 / KM_PER_AU
 
 export const PLANETS: PlanetDef[] = [
   { id: 'sun', name: 'Sun', radiusAu: 696340 * KM, texture: '2k_sun.jpg', periodDays: 0, parent: null,

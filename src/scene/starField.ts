@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { decodeCatalog, type StarCatalog } from '../data/catalogFormat'
 import { colorIndexToRgb } from '../data/starColor'
+import { PC_TO_AU } from '../data/units'
 
 export interface StarField {
   points: THREE.Points
@@ -110,7 +111,7 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
   })
 }
 
-const STAR_UNIT_TO_AU = 206264.806
+const STAR_UNIT_TO_AU = PC_TO_AU
 
 export interface PointLayer {
   points: THREE.Points

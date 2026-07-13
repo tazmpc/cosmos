@@ -25,6 +25,15 @@ describe('search', () => {
     // both are prefix matches for "mar" — the planet must win the tiebreak
     expect(search(all, 'mar')[0].kind).toBe('planet')
   })
+  it('galaxies rank above stars, below planets, at equal match quality', () => {
+    const tied: SearchEntry[] = [
+      { name: 'Messier Star', kind: 'star', key: 20, mag: 1 },
+      { name: 'Messier Galaxy', kind: 'galaxy', key: 'm-test', mag: -26 },
+      { name: 'Messier Planet', kind: 'planet', key: 'm-test-planet', mag: -30 },
+    ]
+    // all three are exact-prefix matches for "messier" — order must be planet, galaxy, star
+    expect(search(tied, 'messier').map(e => e.kind)).toEqual(['planet', 'galaxy', 'star'])
+  })
   it('empty query returns nothing', () => {
     expect(search(entries, '')).toEqual([])
   })

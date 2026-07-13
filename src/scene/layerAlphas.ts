@@ -1,5 +1,4 @@
-const KPC_TO_AU = 2.06264806e8
-const MPC_TO_AU = 2.06264806e11
+import { KPC_TO_AU, MPC_TO_AU } from '../data/units'
 
 export interface LayerAlphas { stars: number; milkyWay: number; galaxies: number }
 

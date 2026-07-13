@@ -12,9 +12,12 @@ import { apparentMagnitude } from './data/starMath'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
 import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
-import { PC_TO_AU, starFocusable } from './scene/starFocus'
+import { starFocusable } from './scene/starFocus'
+import { galaxyFocusable, GALAXY_ARRIVE_AU } from './scene/galaxyFocus'
+import { GALAXIES } from './data/galaxies'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard } from './ui/infoCard'
+import { PC_TO_AU } from './data/units'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
@@ -30,6 +33,9 @@ loadStarField(engine.scene)
     hideBanner()
     const searchEntries: SearchEntry[] = [
       ...planets.map(p => ({ name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30 })),
+      // mag is a constant tie so equal-rank galaxy matches fall back to alphabetical (stable sort)
+      ...[...GALAXIES].sort((a, b) => a.name.localeCompare(b.name))
+        .map(g => ({ name: g.name, kind: 'galaxy' as const, key: g.id, mag: -26 })),
       ...Object.entries(s.names).map(([name, idx]) => ({
         name, kind: 'star' as const, key: idx,
         // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
@@ -61,7 +67,7 @@ loadGalaxyField(engine.scene)
 // layer in/out by camera distance.
 let milkyWay: PointLayer | null = null
 loadPointLayer(engine.scene, '/milkyway.bin', {
-  unitToAu: 206264.806, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.05, minSize: 0.75, maxSize: 2,
+  unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.05, minSize: 0.75, maxSize: 2,
 })
   .then(m => { milkyWay = m })
   .catch((err) => console.warn('Milky Way layer failed to load:', err))
@@ -89,6 +95,10 @@ function focusEntry(e: SearchEntry): void {
     const node = planets.find(p => p.def.id === e.key)!
     flyer.start(planetFocusable(node), node.def.radiusAu * 8)
     showPlanetCard(node.def)
+  } else if (e.kind === 'galaxy') {
+    const def = GALAXIES.find(g => g.id === e.key)!
+    flyer.start(galaxyFocusable(def), GALAXY_ARRIVE_AU)
+    showGalaxyCard(def)
   } else if (stars) {
     flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
     showStarCard(stars.catalog, e.key as number, e.name)

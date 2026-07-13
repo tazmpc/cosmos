@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { layerAlphas } from './layerAlphas'
-
-const KPC = 2.06264806e8, MPC = 2.06264806e11
+import { KPC_TO_AU as KPC, MPC_TO_AU as MPC } from '../data/units'
 
 describe('layerAlphas', () => {
   it('near Earth: stars only', () => {

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { decodeCatalog, type StarCatalog } from '../data/catalogFormat'
 import { buildPointGeometry, makePointMaterial } from './starField'
+import { MPC_TO_AU } from '../data/units'
 
 export interface GalaxyField {
   points: THREE.Points
@@ -9,7 +10,7 @@ export interface GalaxyField {
   update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
 }
 
-const GALAXY_UNIT_TO_AU = 2.06264806e11 // Mpc -> AU
+const GALAXY_UNIT_TO_AU = MPC_TO_AU // Mpc -> AU
 
 export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> {
   const binRes = await fetch('/galaxies.bin')

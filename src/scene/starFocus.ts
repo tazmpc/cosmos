@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import type { Focusable } from '../engine/cameraControls'
 import type { StarCatalog } from '../data/catalogFormat'
+import { PC_TO_AU } from '../data/units'
 
-export const PC_TO_AU = 206264.806
 export const STAR_MIN_APPROACH_AU = 500 // below this, f32 GPU jitter would show; stars are points anyway
 
 export function starFocusable(catalog: StarCatalog, index: number, name: string): Focusable {
