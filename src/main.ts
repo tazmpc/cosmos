@@ -20,8 +20,14 @@ loadStarField(engine.scene)
     stars = s
     const searchEntries: SearchEntry[] = [
       ...planets.map(p => ({ name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30 })),
-      ...Object.entries(s.names).map(([name, idx]) =>
-        ({ name, kind: 'star' as const, key: idx, mag: s.catalog.absMag[idx] })),
+      ...Object.entries(s.names).map(([name, idx]) => ({
+        name, kind: 'star' as const, key: idx,
+        // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
+        mag: s.catalog.absMag[idx] + 5 * (Math.log10(Math.hypot(
+          s.catalog.positions[idx * 3],
+          s.catalog.positions[idx * 3 + 1],
+          s.catalog.positions[idx * 3 + 2])) - 1),
+      })),
     ]
     setupSearch(searchEntries)
   })
@@ -88,7 +94,14 @@ function setupSearch(entries: SearchEntry[]): void {
 
 // click-to-focus: planets via raycast; named stars via screen-space proximity
 const raycaster = new THREE.Raycaster()
+// camera drags synthesize a click on release — suppress those (>5 px pointer travel)
+let downX = 0
+let downY = 0
+engine.renderer.domElement.addEventListener('pointerdown', (ev) => {
+  downX = ev.clientX; downY = ev.clientY
+})
 engine.renderer.domElement.addEventListener('click', (ev) => {
+  if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return
   if (flyer.isActive()) return
   const ndc = new THREE.Vector2(
     (ev.clientX / window.innerWidth) * 2 - 1,

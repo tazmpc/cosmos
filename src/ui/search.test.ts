@@ -28,4 +28,17 @@ describe('search', () => {
   it('empty query returns nothing', () => {
     expect(search(entries, '')).toEqual([])
   })
+  it('brighter star wins the tiebreak at equal match quality', () => {
+    const stars: SearchEntry[] = [
+      { name: 'Denebola', kind: 'star', key: 10, mag: 2.14 },
+      { name: 'Deneb', kind: 'star', key: 11, mag: 1.25 },
+    ]
+    // both are prefix matches for "den" — the brighter (lower mag) star must rank first
+    expect(search(stars, 'den')[0].name).toBe('Deneb')
+  })
+  it('caps results at the limit (default 8)', () => {
+    const many: SearchEntry[] = Array.from({ length: 10 }, (_, i) =>
+      ({ name: `Star Alcor ${i}`, kind: 'star' as const, key: i, mag: i }))
+    expect(search(many, 'alcor')).toHaveLength(8)
+  })
 })
