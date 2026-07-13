@@ -6,6 +6,9 @@ import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, type StarField } from './scene/starField'
 import { showBanner } from './ui/banner'
+import { search, type SearchEntry } from './ui/search'
+import { FlyToAnimator } from './engine/flyTo'
+import { PC_TO_AU, starFocusable } from './scene/starFocus'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
@@ -13,7 +16,15 @@ const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 
 let stars: StarField | null = null
 loadStarField(engine.scene)
-  .then(s => { stars = s })
+  .then(s => {
+    stars = s
+    const searchEntries: SearchEntry[] = [
+      ...planets.map(p => ({ name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30 })),
+      ...Object.entries(s.names).map(([name, idx]) =>
+        ({ name, kind: 'star' as const, key: idx, mag: s.catalog.absMag[idx] })),
+    ]
+    setupSearch(searchEntries)
+  })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
 
 export function planetFocusable(n: PlanetNode): Focusable {
@@ -32,7 +43,89 @@ const hudName = document.querySelector('#hud .focus-name')!
 const hudDist = document.querySelector('#hud .focus-dist')!
 const camTruePos = new THREE.Vector3()
 
+const flyer = new FlyToAnimator(controls)
+
+function focusEntry(e: SearchEntry): void {
+  if (e.kind === 'planet') {
+    const node = planets.find(p => p.def.id === e.key)!
+    flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+  } else if (stars) {
+    flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
+  }
+  ;(document.getElementById('search') as HTMLInputElement).value = ''
+  renderResults([])
+}
+
+const searchInput = document.getElementById('search') as HTMLInputElement
+const resultsEl = document.getElementById('search-results')!
+let currentResults: SearchEntry[] = []
+let selIdx = 0
+
+function renderResults(rs: SearchEntry[]): void {
+  currentResults = rs; selIdx = 0
+  resultsEl.innerHTML = ''
+  rs.forEach((e, i) => {
+    const li = document.createElement('li')
+    li.textContent = `${e.name}  ·  ${e.kind}`
+    li.className = i === selIdx ? 'sel' : ''
+    li.onclick = () => focusEntry(e)
+    resultsEl.appendChild(li)
+  })
+}
+
+function setupSearch(entries: SearchEntry[]): void {
+  searchInput.addEventListener('input', () => renderResults(search(entries, searchInput.value)))
+  searchInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown') { selIdx = Math.min(selIdx + 1, currentResults.length - 1) }
+    else if (ev.key === 'ArrowUp') { selIdx = Math.max(selIdx - 1, 0) }
+    else if (ev.key === 'Enter' && currentResults[selIdx]) { focusEntry(currentResults[selIdx]); return }
+    else if (ev.key === 'Escape') { renderResults([]); searchInput.blur(); return }
+    else return
+    ev.preventDefault()
+    Array.from(resultsEl.children).forEach((c, i) => (c as HTMLElement).className = i === selIdx ? 'sel' : '')
+  })
+}
+
+// click-to-focus: planets via raycast; named stars via screen-space proximity
+const raycaster = new THREE.Raycaster()
+engine.renderer.domElement.addEventListener('click', (ev) => {
+  if (flyer.isActive()) return
+  const ndc = new THREE.Vector2(
+    (ev.clientX / window.innerWidth) * 2 - 1,
+    -(ev.clientY / window.innerHeight) * 2 + 1)
+  raycaster.setFromCamera(ndc, engine.camera)
+  const hit = raycaster.intersectObjects(planets.map(p => p.mesh))[0]
+  if (hit) {
+    const node = planets.find(p => p.mesh === hit.object)!
+    if (node.def.name !== controls.focus.name) flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+    return
+  }
+  if (!stars) return
+  // project named stars, pick nearest within 14 px
+  let best: { name: string; idx: number; d2: number } | null = null
+  const v = new THREE.Vector3()
+  for (const [name, idx] of Object.entries(stars.names)) {
+    v.set(
+      stars.catalog.positions[idx * 3] * PC_TO_AU - camTruePos.x,
+      stars.catalog.positions[idx * 3 + 1] * PC_TO_AU - camTruePos.y,
+      stars.catalog.positions[idx * 3 + 2] * PC_TO_AU - camTruePos.z,
+    ).project(engine.camera)
+    if (v.z > 1) continue // behind camera
+    const dx = (v.x - ndc.x) * window.innerWidth / 2
+    const dy = (v.y - ndc.y) * window.innerHeight / 2
+    const d2 = dx * dx + dy * dy
+    if (d2 < 14 * 14 && (!best || d2 < best.d2)) best = { name, idx, d2 }
+  }
+  if (best) flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
+})
+
+let lastMs = 0
+
 function frame(realMs: number) {
+  const dt = lastMs ? (realMs - lastMs) / 1000 : 0
+  lastMs = realMs
+  flyer.update(dt)
+
   clock.tick(realMs)
   updatePositions(planets, clock.now())
   controls.getCameraTruePos(camTruePos)
