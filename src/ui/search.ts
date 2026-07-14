@@ -3,6 +3,7 @@ export interface SearchEntry {
   kind: 'planet' | 'galaxy' | 'star'
   key: string | number // planet id, galaxy id, or star index
   mag: number          // for tie-breaking: brighter first
+  label?: string        // display override for renderResults (kind stays 'planet' for ranking)
 }
 
 // kind tiebreak order at equal match rank: planet > galaxy > star

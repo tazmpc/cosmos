@@ -33,7 +33,10 @@ loadStarField(engine.scene)
     stars = s
     hideBanner()
     const searchEntries: SearchEntry[] = [
-      ...planets.map(p => ({ name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30 })),
+      ...planets.map(p => ({
+        name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30,
+        label: p.def.id === 'sun' ? 'star' : p.def.parent != null ? 'moon' : undefined,
+      })),
       // mag is a constant tie so equal-rank galaxy matches fall back to alphabetical (stable sort)
       ...[...GALAXIES].sort((a, b) => a.name.localeCompare(b.name))
         .map(g => ({ name: g.name, kind: 'galaxy' as const, key: g.id, mag: -26 })),
@@ -123,7 +126,7 @@ function renderResults(rs: SearchEntry[]): void {
   resultsEl.innerHTML = ''
   rs.forEach((e, i) => {
     const li = document.createElement('li')
-    li.textContent = `${e.name}  ·  ${e.kind}`
+    li.textContent = `${e.name}  ·  ${e.label ?? e.kind}`
     li.className = i === selIdx ? 'sel' : ''
     li.onclick = () => focusEntry(e)
     resultsEl.appendChild(li)

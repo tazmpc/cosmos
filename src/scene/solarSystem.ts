@@ -16,12 +16,17 @@ export function createSolarSystem(scene: THREE.Scene): { nodes: PlanetNode[]; su
   scene.add(new THREE.AmbientLight(0xffffff, 0.04))
 
   for (const def of PLANETS) {
-    const tex = loader.load(`/textures/${def.texture}`)
-    tex.colorSpace = THREE.SRGBColorSpace
     const geo = new THREE.SphereGeometry(def.radiusAu, 48, 24)
-    const mat = def.id === 'sun'
-      ? new THREE.MeshBasicMaterial({ map: tex })
-      : new THREE.MeshLambertMaterial({ map: tex })
+    let mat: THREE.Material
+    if (!def.texture) {
+      mat = new THREE.MeshLambertMaterial({ color: def.color ?? 0x888888 })
+    } else {
+      const tex = loader.load(`/textures/${def.texture}`)
+      tex.colorSpace = THREE.SRGBColorSpace
+      mat = def.id === 'sun'
+        ? new THREE.MeshBasicMaterial({ map: tex })
+        : new THREE.MeshLambertMaterial({ map: tex })
+    }
     const mesh = new THREE.Mesh(geo, mat)
     mesh.rotation.x = Math.PI / 2 // sphere poles → +Z (EQJ north)
     mesh.userData.planetId = def.id

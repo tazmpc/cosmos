@@ -62,4 +62,7 @@ see in the galaxy layer *is the real survey footprint*, not a rendering artifact
   picks up from there.
 - Stars are points: fly-to arrival stops at 500 AU (below that, 32-bit GPU precision
   would visibly jitter — and there is nothing closer to see).
+- Only Earth's Moon and Jupiter's Galilean moons (Io, Europa, Ganymede, Callisto) are
+  included — they're the moons with real ephemerides in astronomy-engine. Titan and the
+  rest would require modeled orbits, deferred.
 - Design docs: docs/superpowers/specs/ (approved spec) and docs/superpowers/plans/ (implementation plan).
