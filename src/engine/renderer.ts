@@ -7,8 +7,13 @@ export interface Engine {
 }
 
 export function createEngine(container: HTMLElement): Engine {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    logarithmicDepthBuffer: true,
+    powerPreference: 'high-performance',
+  })
+  // 1.5 instead of full Retina 2.0: ~44% fewer fragments, visually near-identical for point fields
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.outputColorSpace = THREE.SRGBColorSpace
   container.appendChild(renderer.domElement)
@@ -30,7 +35,7 @@ export function createEngine(container: HTMLElement): Engine {
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight
     camera.updateProjectionMatrix()
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.setSize(window.innerWidth, window.innerHeight)
   })
 

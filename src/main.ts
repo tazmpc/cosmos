@@ -75,7 +75,7 @@ const galaxySprites = createGalaxySprites(engine.scene)
 // brightness IS the density map (the real Gaia sky data). layerAlphas still gates the whole
 // layer in/out by camera distance.
 let milkyWay: PointLayer | null = null
-loadPointLayer(engine.scene, '/milkyway.bin', {
+loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway.bin', {
   unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.05, minSize: 0.75, maxSize: 2,
 })
   .then(m => { milkyWay = m })

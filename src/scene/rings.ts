@@ -16,7 +16,7 @@ export function addSaturnRings(saturnMesh: THREE.Mesh): void {
     v.fromBufferAttribute(posAttr, i)
     uv.setXY(i, (v.length() - INNER) / (OUTER - INNER), 1)
   }
-  const tex = new THREE.TextureLoader().load('/textures/2k_saturn_ring_alpha.png')
+  const tex = new THREE.TextureLoader().load(import.meta.env.BASE_URL + 'textures/2k_saturn_ring_alpha.png')
   tex.colorSpace = THREE.SRGBColorSpace
   const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide, transparent: true })
   const ring = new THREE.Mesh(geo, mat)

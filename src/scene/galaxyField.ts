@@ -13,7 +13,7 @@ export interface GalaxyField {
 const GALAXY_UNIT_TO_AU = MPC_TO_AU // Mpc -> AU
 
 export async function loadGalaxyField(scene: THREE.Scene): Promise<GalaxyField> {
-  const binRes = await fetch('/galaxies.bin')
+  const binRes = await fetch(import.meta.env.BASE_URL + 'galaxies.bin')
   if (!binRes.ok) throw new Error('galaxy catalog fetch failed')
   const catalog = decodeCatalog(await binRes.arrayBuffer())
 

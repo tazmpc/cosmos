@@ -102,7 +102,7 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
       uAlphaCap: { value: cfg.alphaCap },
       uMinSize: { value: cfg.minSize },
       uMaxSize: { value: cfg.maxSize },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.5) },
       uLayerAlpha: { value: 1.0 },
     },
     transparent: true,
@@ -158,11 +158,11 @@ export async function loadStarField(scene: THREE.Scene): Promise<StarField> {
   // that then failed, the whole load would reject while the mesh stayed orphaned in the scene
   // (frozen at default uniforms, never updated or disposed). Sequencing guarantees nothing is
   // added to the scene unless the entire layer load succeeds — worth the small parallelism loss.
-  const namesRes = await fetch('/starnames.json')
+  const namesRes = await fetch(import.meta.env.BASE_URL + 'starnames.json')
   if (!namesRes.ok) throw new Error('star names fetch failed')
   const names = (await namesRes.json()) as Record<string, number>
 
-  const layer = await loadPointLayer(scene, '/stars.bin', {
+  const layer = await loadPointLayer(scene, import.meta.env.BASE_URL + 'stars.bin', {
     unitToAu: STAR_UNIT_TO_AU, unitToPc: 1, scale: 9, faintMag: 6.5, alphaCap: 1, minSize: 0.75, maxSize: 14,
   })
 

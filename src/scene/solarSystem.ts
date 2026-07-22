@@ -21,7 +21,7 @@ export function createSolarSystem(scene: THREE.Scene): { nodes: PlanetNode[]; su
     if (!def.texture) {
       mat = new THREE.MeshLambertMaterial({ color: def.color ?? 0x888888 })
     } else {
-      const tex = loader.load(`/textures/${def.texture}`)
+      const tex = loader.load(`${import.meta.env.BASE_URL}textures/${def.texture}`)
       tex.colorSpace = THREE.SRGBColorSpace
       mat = def.id === 'sun'
         ? new THREE.MeshBasicMaterial({ map: tex })
