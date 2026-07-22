@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { createEngine } from './engine/renderer'
 import { FocusOrbitControls, type Focusable } from './engine/cameraControls'
-import { createSolarSystem, updatePositions, repositionMeshes, type PlanetNode } from './scene/solarSystem'
+import { createSolarSystem, updatePositions, repositionMeshes, updateEarthNight, type PlanetNode } from './scene/solarSystem'
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
@@ -210,11 +210,16 @@ function frame(realMs: number) {
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
   controls.applyToCamera(engine.camera)
+  // matrixWorldInverse must reflect this frame's camera transform before deriving the
+  // view-space sun direction for Earth's night lights — renderer.render() would refresh it
+  // too, but only after updateEarthNight() needs to read it.
+  engine.camera.updateMatrixWorld()
+  updateEarthNight(engine.camera)
 
   hudName.textContent = controls.focus.name
   hudDist.textContent = formatDistance(controls.distance)
 
-  engine.renderer.render(engine.scene, engine.camera)
+  engine.composer.render()
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
