@@ -163,7 +163,17 @@ function toggleSky(): void {
 
 skyToggleBtn.addEventListener('click', toggleSky)
 window.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && mode === 'sky') exitSky()
+  if (ev.key !== 'Escape' || mode !== 'sky') return
+  // The search input has its own Escape handler (closes the dropdown + calls searchInput.blur()).
+  // That handler runs first — input is the dispatch target, so it always fires before this
+  // ancestor (window) listener during bubble — and its synchronous blur() call already changes
+  // document.activeElement by the time we get here, so activeElement can't be used to detect
+  // "this keydown started in the search box". ev.target is unaffected by that side effect (it
+  // stays pinned to the original dispatch target through the whole bubble phase), so it's the
+  // deterministic check: if this Escape originated in the search input, let its own handler own
+  // it (close the dropdown) and don't also exit sky mode on the same press.
+  if (ev.target === searchInput) return
+  exitSky()
 })
 // -----------------------------------------------------------------------------------------
 
