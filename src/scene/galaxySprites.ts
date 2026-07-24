@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 import type { GalaxyDef } from '../data/galaxies'
 import { GALAXIES } from '../data/galaxies'
+import type { DeepSkyDef } from '../data/deepSky'
+import { DEEP_SKY } from '../data/deepSky'
 import { raDecDistToXyz } from '../data/starMath'
-import { AU_PER_LY, MPC_TO_AU } from '../data/units'
+import { AU_PER_LY, MPC_TO_AU, PC_TO_AU } from '../data/units'
 
 /** A single curated-galaxy glow sprite plus its true heliocentric position. */
 export interface GalaxySprite {
@@ -19,7 +21,23 @@ export interface GalaxySpriteLayer {
   update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
 }
 
-const DEFAULT_DIAMETER_KLY = 100
+/** A single curated deep-sky-object glow sprite plus its true heliocentric position. */
+export interface DeepSkySprite {
+  def: DeepSkyDef
+  sprite: THREE.Sprite
+  truePos: THREE.Vector3 // heliocentric EQJ AU, double precision (JS numbers)
+}
+
+export interface DeepSkySpriteLayer {
+  group: THREE.Group
+  sprites: DeepSkySprite[]
+  /** Call each frame with the camera's true heliocentric position in AU, and the crossfade alpha
+   * (0..1) to ride — deep-sky objects live at star-field distances, so callers pass layerAlphas'
+   * `stars` weight (not `galaxies`, which only ramps up far beyond where any DSO sits). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha?: number): void
+}
+
+export const DEFAULT_DIAMETER_KLY = 100
 
 /** Builds a soft radial-gradient glow texture, matching the sun-glow-sprite pattern in solarSystem.ts. */
 function makeGlowTexture(): THREE.CanvasTexture {
@@ -78,6 +96,51 @@ export function createGalaxySprites(scene: THREE.Scene): GalaxySpriteLayer {
     } else {
       sprite.scale.set(s, s * 0.42, 1) // edge-on-ish lens look for spirals/irregulars
     }
+
+    group.add(sprite)
+    sprites.push({ def, sprite, truePos })
+  }
+
+  group.visible = false
+  scene.add(group)
+
+  return {
+    group, sprites,
+    update(camTruePosAu, layerAlpha = 1) {
+      for (const { sprite, truePos } of sprites) {
+        sprite.position.copy(truePos).sub(camTruePosAu)
+        ;(sprite.material as THREE.SpriteMaterial).opacity = 0.5 * layerAlpha
+      }
+      group.visible = layerAlpha > 0.002
+    },
+  }
+}
+
+/** Renders the ~15 curated deep-sky objects (deepSky.ts — nebulae and star clusters) as named
+ * glow sprites, the same landmark role as createGalaxySprites but for objects that live inside
+ * the Milky Way (star-field distances, parsecs not megaparsecs) rather than out among the
+ * galaxies. All rendered as simple round glows — unlike galaxies there's no consistent
+ * elliptical/edge-on convention across nebula and cluster types worth encoding. */
+export function createDeepSkySprites(scene: THREE.Scene): DeepSkySpriteLayer {
+  const texture = makeGlowTexture()
+  const group = new THREE.Group()
+  const sprites: DeepSkySprite[] = []
+
+  for (const def of DEEP_SKY) {
+    const [x, y, z] = raDecDistToXyz(def.raHours, def.decDeg, def.distPc)
+    const truePos = new THREE.Vector3(x * PC_TO_AU, y * PC_TO_AU, z * PC_TO_AU)
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0,
+    })
+    const sprite = new THREE.Sprite(material)
+
+    const diameterAu = def.diameterLy * AU_PER_LY
+    sprite.scale.set(diameterAu, diameterAu, 1)
 
     group.add(sprite)
     sprites.push({ def, sprite, truePos })

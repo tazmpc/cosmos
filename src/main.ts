@@ -6,7 +6,8 @@ import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
-import { createGalaxySprites } from './scene/galaxySprites'
+import { createGalaxySprites, createDeepSkySprites } from './scene/galaxySprites'
+import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets } from './scene/objectImagery'
 import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
 import { apparentMagnitude } from './data/starMath'
@@ -15,9 +16,11 @@ import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
 import { starFocusable } from './scene/starFocus'
 import { galaxyFocusable, GALAXY_ARRIVE_AU } from './scene/galaxyFocus'
+import { deepSkyFocusable, deepSkyMinApproachAu } from './scene/deepSkyFocus'
 import { GALAXIES } from './data/galaxies'
+import { DEEP_SKY } from './data/deepSky'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard } from './ui/infoCard'
 import { PC_TO_AU } from './data/units'
 
 const engine = createEngine(document.getElementById('app')!)
@@ -40,6 +43,8 @@ loadStarField(engine.scene)
       // mag is a constant tie so equal-rank galaxy matches fall back to alphabetical (stable sort)
       ...[...GALAXIES].sort((a, b) => a.name.localeCompare(b.name))
         .map(g => ({ name: g.name, kind: 'galaxy' as const, key: g.id, mag: -26 })),
+      ...[...DEEP_SKY].sort((a, b) => a.name.localeCompare(b.name))
+        .map(d => ({ name: d.name, kind: 'dso' as const, key: d.id, mag: -26, label: 'deep sky' })),
       ...Object.entries(s.names).map(([name, idx]) => ({
         name, kind: 'star' as const, key: idx,
         // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
@@ -62,6 +67,18 @@ loadGalaxyField(engine.scene)
 // galaxies.bin point cloud — that catalog's redshift pipeline correctly omits the (blueshifted)
 // Local Group, so without this, flying to Andromeda arrives at visually empty space.
 const galaxySprites = createGalaxySprites(engine.scene)
+
+// Curated deep-sky objects (Orion Nebula, Pleiades, …) — same landmark role, but living at
+// star-field distances inside the Milky Way rather than out among the galaxies.
+const deepSkySprites = createDeepSkySprites(engine.scene)
+
+// Lazy hips2fits photo upgrades for every curated galaxy + deep-sky-object glow sprite: fetches
+// a real DSS2 cutout on first focus or camera approach, swaps it in, and silently keeps the glow
+// on failure. See objectImagery.ts.
+const objectImagery = createObjectImagery([
+  ...galaxyImageTargets(galaxySprites),
+  ...deepSkyImageTargets(deepSkySprites),
+])
 
 // Milky Way bridge layer — real Gaia sky-plane density, modeled depth. Optional garnish: no
 // loading banner and no error banner on failure, just a console warning.
@@ -108,6 +125,14 @@ function focusEntry(e: SearchEntry): void {
     const def = GALAXIES.find(g => g.id === e.key)!
     flyer.start(galaxyFocusable(def), GALAXY_ARRIVE_AU)
     showGalaxyCard(def)
+    objectImagery.focus(def.id)
+  } else if (e.kind === 'dso') {
+    const def = DEEP_SKY.find(d => d.id === e.key)!
+    // Arrive a bit beyond the minimum approach so the object is framed, not sat inside — same
+    // "frame it, don't clip it" idea as the galaxy/planet arrival distances above.
+    flyer.start(deepSkyFocusable(def), deepSkyMinApproachAu(def) * 4)
+    showDeepSkyCard(def)
+    objectImagery.focus(def.id)
   } else if (stars) {
     flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
     showStarCard(stars.catalog, e.key as number, e.name)
@@ -207,6 +232,10 @@ function frame(realMs: number) {
   milkyWay?.update(camTruePos, la.milkyWay)
   galaxies?.update(camTruePos, la.galaxies)
   galaxySprites.update(camTruePos, la.galaxies)
+  // Deep-sky objects live at star-field distances, so they ride the stars crossfade, not the
+  // galaxies one (which only ramps up far beyond where any DSO sits).
+  deepSkySprites.update(camTruePos, la.stars)
+  objectImagery.update(camTruePos, dt)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
   controls.applyToCamera(engine.camera)

@@ -1,13 +1,14 @@
 export interface SearchEntry {
   name: string
-  kind: 'planet' | 'galaxy' | 'star'
-  key: string | number // planet id, galaxy id, or star index
+  kind: 'planet' | 'galaxy' | 'dso' | 'star'
+  key: string | number // planet id, galaxy id, deep-sky-object id, or star index
   mag: number          // for tie-breaking: brighter first
   label?: string        // display override for renderResults (kind stays 'planet' for ranking)
 }
 
-// kind tiebreak order at equal match rank: planet > galaxy > star
-const KIND_ORDER: Record<SearchEntry['kind'], number> = { planet: 0, galaxy: 1, star: 2 }
+// kind tiebreak order at equal match rank: planet > (galaxy, dso) > star — dso shares the
+// galaxy rank tier since both are curated non-star landmarks with hips2fits imagery.
+const KIND_ORDER: Record<SearchEntry['kind'], number> = { planet: 0, galaxy: 1, dso: 1, star: 2 }
 
 function matchRank(query: string, name: string): number | null {
   const q = query.toLowerCase().trim()

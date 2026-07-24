@@ -1,8 +1,10 @@
 import type { PlanetDef } from '../data/planets'
 import type { StarCatalog } from '../data/catalogFormat'
 import type { GalaxyDef } from '../data/galaxies'
+import type { DeepSkyDef } from '../data/deepSky'
 import { apparentMagnitude } from '../data/starMath'
-import { PC_TO_LY } from '../data/units'
+import { PC_TO_LY, PC_TO_AU } from '../data/units'
+import { formatDistance } from './format'
 
 export function showPlanetCard(def: PlanetDef): void {
   render(def.name, def.facts)
@@ -11,6 +13,15 @@ export function showPlanetCard(def: PlanetDef): void {
 export function showGalaxyCard(def: GalaxyDef): void {
   render(def.name, {
     Distance: `${(def.distMpc * PC_TO_LY).toFixed(1)} Mly`,
+    Type: def.type,
+    ...def.facts,
+  })
+}
+
+export function showDeepSkyCard(def: DeepSkyDef): void {
+  render(def.name, {
+    Distance: formatDistance(def.distPc * PC_TO_AU),
+    Diameter: `${def.diameterLy.toLocaleString('en-US')} ly`,
     Type: def.type,
     ...def.facts,
   })
