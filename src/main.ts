@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { createEngine } from './engine/renderer'
 import { FocusOrbitControls, type Focusable } from './engine/cameraControls'
+import { SkyViewControls } from './engine/skyViewControls'
 import { createSolarSystem, updatePositions, repositionMeshes, updateEarthNight, type PlanetNode } from './scene/solarSystem'
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
@@ -20,7 +21,7 @@ import { deepSkyFocusable, deepSkyMinApproachAu } from './scene/deepSkyFocus'
 import { GALAXIES } from './data/galaxies'
 import { DEEP_SKY } from './data/deepSky'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, hideCard } from './ui/infoCard'
 import { PC_TO_AU } from './data/units'
 
 const engine = createEngine(document.getElementById('app')!)
@@ -116,7 +117,58 @@ const camTruePos = new THREE.Vector3()
 
 const flyer = new FlyToAnimator(controls)
 
+// --- Sky view mode: "stand on Earth, look up". ---------------------------------------------
+// Both control classes stay attached to the canvas for the whole session; only one is
+// `enabled` at a time so their pointer/wheel listeners don't fight over drag state.
+const skyControls = new SkyViewControls(engine.renderer.domElement)
+skyControls.enabled = false
+let mode: 'orbit' | 'sky' = 'orbit'
+const skyToggleBtn = document.getElementById('sky-toggle')!
+const skyHint = document.getElementById('sky-hint')!
+const hud = document.getElementById('hud')!
+const skyViewDir = new THREE.Vector3()
+let infoCardWasVisible = false
+
+function enterSky(): void {
+  if (mode === 'sky') return
+  mode = 'sky'
+  flyer.cancel()
+  controls.enabled = false
+  skyControls.enabled = true
+  earth.mesh.visible = false // children (clouds, atmosphere) hide with the parent mesh
+  infoCardWasVisible = document.getElementById('info-card')!.style.display === 'block'
+  hideCard()
+  hud.style.display = 'none'
+  skyHint.style.display = 'block'
+  skyToggleBtn.classList.add('active')
+}
+
+function exitSky(): void {
+  if (mode === 'orbit') return
+  mode = 'orbit'
+  skyControls.enabled = false
+  controls.enabled = true
+  earth.mesh.visible = true
+  engine.camera.fov = 55
+  engine.camera.updateProjectionMatrix()
+  if (infoCardWasVisible) document.getElementById('info-card')!.style.display = 'block'
+  hud.style.display = 'block'
+  skyHint.style.display = 'none'
+  skyToggleBtn.classList.remove('active')
+}
+
+function toggleSky(): void {
+  if (mode === 'sky') exitSky(); else enterSky()
+}
+
+skyToggleBtn.addEventListener('click', toggleSky)
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && mode === 'sky') exitSky()
+})
+// -----------------------------------------------------------------------------------------
+
 function focusEntry(e: SearchEntry): void {
+  if (mode === 'sky') exitSky() // a search fly-to exits sky view first
   if (e.kind === 'planet') {
     const node = planets.find(p => p.def.id === e.key)!
     flyer.start(planetFocusable(node), node.def.radiusAu * 8)
@@ -180,6 +232,7 @@ engine.renderer.domElement.addEventListener('pointerdown', (ev) => {
   downX = ev.clientX; downY = ev.clientY
 })
 engine.renderer.domElement.addEventListener('click', (ev) => {
+  if (mode === 'sky') return // click-to-focus is disabled entirely in sky mode
   if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return
   if (flyer.isActive()) return
   const ndc = new THREE.Vector2(
@@ -226,8 +279,15 @@ function frame(realMs: number) {
 
   clock.tick(realMs)
   updatePositions(planets, clock.now())
-  controls.getCameraTruePos(camTruePos)
+  if (mode === 'sky') camTruePos.copy(earth.truePos)
+  else controls.getCameraTruePos(camTruePos)
   const la = layerAlphas(camTruePos.length())
+  if (mode === 'sky') {
+    // At 1 AU the real MW crossfade ramp is 0 (it's tuned for galactic-scale distances) — but
+    // the band genuinely is visible in the night sky from Earth, so sky view overrides it to a
+    // fixed value rather than using the ramp's (wrong, for this case) answer.
+    la.milkyWay = 0.6
+  }
   stars?.update(camTruePos, la.stars)
   milkyWay?.update(camTruePos, la.milkyWay)
   galaxies?.update(camTruePos, la.galaxies)
@@ -242,7 +302,14 @@ function frame(realMs: number) {
   objectImagery.update(camTruePos, dt)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
-  controls.applyToCamera(engine.camera)
+  if (mode === 'sky') {
+    engine.camera.position.set(0, 0, 0)
+    engine.camera.lookAt(skyControls.getViewDir(skyViewDir))
+    engine.camera.fov = skyControls.fov
+    engine.camera.updateProjectionMatrix()
+  } else {
+    controls.applyToCamera(engine.camera)
+  }
   // matrixWorldInverse must reflect this frame's camera transform before deriving the
   // view-space sun direction for Earth's night lights — renderer.render() would refresh it
   // too, but only after updateEarthNight() needs to read it.

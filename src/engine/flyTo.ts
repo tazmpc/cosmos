@@ -39,6 +39,14 @@ export class FlyToAnimator {
 
   isActive(): boolean { return this.active }
 
+  /** Aborts an in-flight animation, leaving controls.focus wherever the virtual focus last was
+   * (sky-view entry calls this — the orbit focus/distance state doesn't matter again until the
+   * user exits sky view, at which point it's simply whatever it was left as). */
+  cancel(): void {
+    this.active = false
+    this.target = null
+  }
+
   update(dtSeconds: number): void {
     if (!this.active || !this.target) return
     this.t = Math.min(1, this.t + dtSeconds / this.dur)

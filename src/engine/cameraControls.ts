@@ -13,6 +13,9 @@ const MAX_DIST_AU = 4e14 // ~1.9 Gpc, just beyond the deepest galaxy in the cata
 export class FocusOrbitControls {
   focus: Focusable
   distance: number
+  // false while sky view owns the canvas (SkyViewControls is enabled instead) — listeners
+  // stay attached but no-op, so re-enabling on sky-view exit resumes exactly where it left off.
+  enabled = true
   private yaw = 0.5
   private pitch = 0.4 // radians from equatorial plane, clamped
   private dragging = false
@@ -23,11 +26,12 @@ export class FocusOrbitControls {
     this.focus = focus
     this.distance = distance
     canvas.addEventListener('pointerdown', (e) => {
+      if (!this.enabled) return
       this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY
       canvas.setPointerCapture(e.pointerId)
     })
     canvas.addEventListener('pointermove', (e) => {
-      if (!this.dragging) return
+      if (!this.enabled || !this.dragging) return
       this.yaw -= (e.clientX - this.lastX) * 0.005
       this.pitch += (e.clientY - this.lastY) * 0.005
       // ±1.52 rad ≈ 87.1°: lookAt-based orientation becomes roll-unstable as the view direction approaches camera.up (+Z)
@@ -38,6 +42,7 @@ export class FocusOrbitControls {
     canvas.addEventListener('pointercancel', () => { this.dragging = false })
     canvas.addEventListener('lostpointercapture', () => { this.dragging = false })
     canvas.addEventListener('wheel', (e) => {
+      if (!this.enabled) return
       e.preventDefault()
       // zoom speed proportional to current distance: works at every scale
       this.distance *= Math.exp(e.deltaY * 0.0012)
