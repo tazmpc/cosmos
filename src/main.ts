@@ -232,9 +232,13 @@ function frame(realMs: number) {
   milkyWay?.update(camTruePos, la.milkyWay)
   galaxies?.update(camTruePos, la.galaxies)
   galaxySprites.update(camTruePos, la.galaxies)
-  // Deep-sky objects live at star-field distances, so they ride the stars crossfade, not the
-  // galaxies one (which only ramps up far beyond where any DSO sits).
-  deepSkySprites.update(camTruePos, la.stars)
+  // Deep-sky objects are exempt from the stars/galaxies LOD crossfade entirely: they're tiny
+  // (tens to low hundreds of ly across) compared to what those ramps are tuned for, so their own
+  // angular size already makes them naturally invisible from galactic-scale distances — no fade
+  // needed. Using la.stars here was wrong: that ramp keys off camera-distance-from-Sun, which
+  // dims a DSO sprite even while sitting right at its own arrival point (e.g. Omega Centauri at
+  // ~5.2 kpc lands mid-ramp, alpha ≈0.41 — visibly dimmer on arrival for no reason).
+  deepSkySprites.update(camTruePos, 1.0)
   objectImagery.update(camTruePos, dt)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)

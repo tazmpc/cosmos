@@ -79,6 +79,11 @@ export function createObjectImagery(
     loader.load(
       url,
       (texture) => {
+        // Codebase convention: the renderer outputs sRGB, so any loaded (non-generated) texture
+        // must be tagged sRGB or it double-gammas — washed out, flat contrast. The procedural
+        // glow canvas doesn't need this (it's drawn directly, not sampled from sRGB-encoded
+        // source data), but every hips2fits JPEG does.
+        texture.colorSpace = THREE.SRGBColorSpace
         texture.needsUpdate = true
         const material = target.sprite.material as THREE.SpriteMaterial
         material.map = texture

@@ -104,6 +104,16 @@ describe('createObjectImagery', () => {
     expect(loader.calls).toHaveLength(1)
   })
 
+  it('does not refetch a call to focus() after the photo already loaded successfully', () => {
+    const loader = new FakeLoader()
+    const target = makeTarget('m42')
+    const imagery = createObjectImagery([target], loader)
+    imagery.focus('m42')
+    loader.calls[0].onLoad(new THREE.Texture())
+    imagery.focus('m42') // re-focusing (e.g. searching the same object again) must be a no-op
+    expect(loader.calls).toHaveLength(1)
+  })
+
   it('focus() bypasses the proximity check entirely', () => {
     const loader = new FakeLoader()
     const target = makeTarget('m42', { truePos: new THREE.Vector3(1e15, 0, 0) }) // absurdly far
