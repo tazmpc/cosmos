@@ -13,6 +13,7 @@ import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
 import { apparentMagnitude } from './data/starMath'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
+import { loadConstellations, type ConstellationLines } from './scene/constellations'
 import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
 import { starFocusable } from './scene/starFocus'
@@ -99,6 +100,15 @@ loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway.bin', {
   .then(m => { milkyWay = m })
   .catch((err) => console.warn('Milky Way layer failed to load:', err))
 
+// Constellation lines — sky-view-only overlay (d3-celestial line data). Loaded at startup so
+// they're ready the first time sky mode is entered; loadConstellations already warns + degrades
+// gracefully on failure, so no .catch needed here.
+let constellations: ConstellationLines | null = null
+loadConstellations(engine.scene).then(c => {
+  constellations = c
+  if (mode === 'sky') c.setVisible(true) // in case sky mode was entered before this resolved
+})
+
 export function planetFocusable(n: PlanetNode): Focusable {
   return {
     name: n.def.name,
@@ -141,6 +151,7 @@ function enterSky(): void {
   hud.style.display = 'none'
   skyHint.style.display = 'block'
   skyToggleBtn.classList.add('active')
+  constellations?.setVisible(true)
 }
 
 function exitSky(): void {
@@ -155,6 +166,7 @@ function exitSky(): void {
   hud.style.display = 'block'
   skyHint.style.display = 'none'
   skyToggleBtn.classList.remove('active')
+  constellations?.setVisible(false)
 }
 
 function toggleSky(): void {
