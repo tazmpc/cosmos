@@ -322,9 +322,6 @@ function frame(realMs: number) {
     // fixed value rather than using the ramp's (wrong, for this case) answer.
     la.milkyWay = 0.6
   }
-  stars?.update(camTruePos, la.stars)
-  milkyWay?.update(camTruePos, la.milkyWay)
-  galaxies?.update(camTruePos, la.galaxies)
   galaxySprites.update(camTruePos, la.galaxies)
   // Deep-sky objects are exempt from the stars/galaxies LOD crossfade entirely: they're tiny
   // (tens to low hundreds of ly across) compared to what those ramps are tuned for, so their own
@@ -349,6 +346,15 @@ function frame(realMs: number) {
   // too, but only after updateEarthNight() needs to read it.
   engine.camera.updateMatrixWorld()
   updateEarthNight(engine.camera)
+
+  // Point layers update AFTER the camera transform block above (and its updateMatrixWorld): each
+  // one frustum-culls its spatial chunks against camera.projectionMatrix * matrixWorldInverse, so
+  // it needs THIS frame's orientation/FOV, not the previous frame's. Nothing between the old call
+  // site and here reads the layers (they only write shader uniforms + per-chunk visibility), so
+  // the move is behaviour-neutral apart from the culling being one frame fresher.
+  stars?.update(camTruePos, la.stars, engine.camera)
+  milkyWay?.update(camTruePos, la.milkyWay, engine.camera)
+  galaxies?.update(camTruePos, la.galaxies, engine.camera)
 
   hudName.textContent = controls.focus.name
   hudDist.textContent = formatDistance(controls.distance)
