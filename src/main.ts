@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { createEngine } from './engine/renderer'
+import { ResolutionGovernor } from './engine/resolutionGovernor'
 import { FocusOrbitControls, type Focusable } from './engine/cameraControls'
 import { SkyViewControls } from './engine/skyViewControls'
 import { createSolarSystem, updatePositions, repositionMeshes, updateEarthNight, type PlanetNode } from './scene/solarSystem'
@@ -89,13 +90,16 @@ const objectImagery = createObjectImagery([
 // must stay visible across 3 orders of magnitude of camera distance (inside the disk out to
 // ~181 kpc and beyond), and per-point apparent magnitude can't carry that — a synthetic
 // absMag-5 point at 181 kpc has appMag ≈ 26, alpha ≈ 0 at any sane faintMag. So faintMag 30
-// effectively disables the per-point magnitude fade (every point renders) and alphaCap 0.05
-// keeps each point subtle enough that 2M additively-blended points read as a soft glow whose
+// effectively disables the per-point magnitude fade (every point renders) and alphaCap 0.10
+// keeps each point subtle enough that 1M additively-blended points read as a soft glow whose
 // brightness IS the density map (the real Gaia sky data). layerAlphas still gates the whole
 // layer in/out by camera distance.
+// (perf: milkyway.bin is now 1M points, built with a 2x stride in build-milkyway.ts — alphaCap
+// doubled 0.05->0.10 here to compensate: half the points at twice the alpha ≈ same total
+// additive energy, so the band's brightness should read the same as before.)
 let milkyWay: PointLayer | null = null
 loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway.bin', {
-  unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.05, minSize: 0.75, maxSize: 2,
+  unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.10, minSize: 0.75, maxSize: 2,
 })
   .then(m => { milkyWay = m })
   .catch((err) => console.warn('Milky Way layer failed to load:', err))
@@ -293,10 +297,18 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
 })
 
 let lastMs = 0
+// Dynamic resolution governor: steps engine.renderer's pixel ratio down under sustained load
+// (EMA frame time > 22ms for 60 consecutive frames) and back up once comfortably fast again
+// (EMA < 12ms for 300 consecutive frames) — see resolutionGovernor.ts for the pure step logic.
+const resolutionGovernor = new ResolutionGovernor()
 
 function frame(realMs: number) {
   const dt = lastMs ? (realMs - lastMs) / 1000 : 0
   lastMs = realMs
+  if (dt > 0) {
+    const newRatio = resolutionGovernor.update(dt * 1000)
+    if (newRatio !== null) engine.setPixelRatio(newRatio)
+  }
   flyer.update(dt)
 
   clock.tick(realMs)

@@ -10,18 +10,39 @@ export interface Engine {
   camera: THREE.PerspectiveCamera
   composer: EffectComposer
   bloom: UnrealBloomPass
+  /** Set the render pixel ratio (used by the dynamic-resolution governor, main.ts). Re-sizes
+   *  the renderer, the composer, and re-applies the half-resolution bloom override. */
+  setPixelRatio: (ratio: number) => void
 }
+
+const PIXEL_RATIO_CAP = 1.5 // 1.5 instead of full Retina 2.0: ~44% fewer fragments, visually near-identical for point fields
 
 export function createEngine(container: HTMLElement): Engine {
   const renderer = new THREE.WebGLRenderer({
-    antialias: true,
+    // The composer's own render target (below) carries the MSAA instead — see composerTarget.
+    // Canvas MSAA would only ever smooth the OutputPass's single full-screen quad, which has no
+    // internal edges to smooth, so leaving it on here was pure wasted fragment/resolve cost.
+    antialias: false,
     logarithmicDepthBuffer: true,
     powerPreference: 'high-performance',
   })
-  // 1.5 instead of full Retina 2.0: ~44% fewer fragments, visually near-identical for point fields
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+
+  // Ratio requested by the dynamic-resolution governor (main.ts), clamped every apply() against
+  // the device's own devicePixelRatio (which can change if the window is dragged to another
+  // display) — kept separate so a plain window resize never silently undoes governor throttling.
+  let governorRatio = PIXEL_RATIO_CAP
+  const dprCap = () => Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP)
+  let pixelRatio = Math.min(governorRatio, dprCap())
+
+  renderer.setPixelRatio(pixelRatio)
   renderer.setSize(window.innerWidth, window.innerHeight)
   renderer.outputColorSpace = THREE.SRGBColorSpace
+  // OutputPass (added below) is the only pass that ever renders to the canvas (renderTarget ===
+  // null), and per WebGLRenderer's material-compile branch, tone mapping / output-color-space
+  // encoding are only applied there — every other pass renders into an offscreen, Linear-space
+  // target and skips both, so this is applied exactly once, at the very end of the chain.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.toneMappingExposure = 1.15
   container.appendChild(renderer.domElement)
 
   renderer.domElement.addEventListener('webglcontextlost', (e) => {
@@ -42,24 +63,50 @@ export function createEngine(container: HTMLElement): Engine {
   // pixels (Sun, planet limbs), OutputPass applies renderer.outputColorSpace + tone mapping —
   // required last since EffectComposer's intermediate render targets are linear and bypass
   // the renderer's automatic output-encoding step that a direct renderer.render() would do.
-  const composer = new EffectComposer(renderer)
+  //
+  // The composer's own target carries 4x MSAA (r166's WebGLRenderer auto-resolves a `samples`
+  // WebGLRenderTarget to a plain texture whenever the render target is switched away from, so
+  // every downstream pass just samples an ordinary resolved texture) — this is what restores
+  // planet-limb edge quality now that canvas antialias is off. Actual size doesn't matter here;
+  // it's placeholder-sized and corrected by apply() below, right after all passes are added.
+  const composerTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 })
+  const composer = new EffectComposer(renderer, composerTarget)
   composer.addPass(new RenderPass(scene, camera))
   const bloom = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.5, 0.7)
+    new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2), 0.4, 0.5, 0.7)
   composer.addPass(bloom)
   composer.addPass(new OutputPass())
 
-  window.addEventListener('resize', () => {
+  // EffectComposer.addPass()/setSize() always hand every pass the FULL effective (CSS size *
+  // pixelRatio) resolution — there's no per-pass override hook, so UnrealBloomPass's own resize
+  // logic (which halves whatever it's given for its mip-0 buffer) ends up processing at half of
+  // full canvas resolution by default. Calling bloom.setSize() again ourselves, after the
+  // composer's own setSize, with half the canvas resolution forces mip-0 down to a quarter of
+  // full canvas res instead — an extra halving on top of the pass's own.
+  const apply = () => {
+    pixelRatio = Math.min(governorRatio, dprCap())
     camera.aspect = window.innerWidth / window.innerHeight
     camera.updateProjectionMatrix()
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    renderer.setPixelRatio(pixelRatio)
     renderer.setSize(window.innerWidth, window.innerHeight)
-    // setPixelRatio (not setSize) so the composer's render targets pick up a devicePixelRatio
-    // change too (e.g. dragging the window to a different-DPI display) — setSize alone would
-    // reuse the stale ratio captured at composer construction time.
-    composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    // setPixelRatio (not just setSize) so the composer's render targets pick up a
+    // devicePixelRatio change too (e.g. dragging the window to a different-DPI display) —
+    // setSize alone would reuse the stale ratio captured at composer construction time.
+    composer.setPixelRatio(pixelRatio)
     composer.setSize(window.innerWidth, window.innerHeight)
-  })
+    bloom.setSize(
+      Math.round(window.innerWidth * pixelRatio / 2),
+      Math.round(window.innerHeight * pixelRatio / 2),
+    )
+  }
+  apply() // establishes real sizes (composerTarget/passes were placeholder-sized above) and the half-res bloom override
 
-  return { renderer, scene, camera, composer, bloom }
+  window.addEventListener('resize', apply)
+
+  const setPixelRatio = (ratio: number) => {
+    governorRatio = ratio
+    apply()
+  }
+
+  return { renderer, scene, camera, composer, bloom, setPixelRatio }
 }

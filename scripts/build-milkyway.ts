@@ -61,6 +61,7 @@ const weights = new Float64Array(N_BINS) // reused per point — avoids per-bin 
 
 let parsed = 0
 let skipped = 0
+let validRow = 0 // counts rows that passed parsing, independent of the stride below
 
 for (let li = start; li < lines.length; li++) {
   const line = lines[li].trim()
@@ -76,6 +77,17 @@ for (let li = start; li < lines.length; li++) {
     skipped++
     continue
   }
+
+  // Stride: keep every 2nd valid input row -> ~1M points instead of ~2M (main.ts doubles
+  // alphaCap 0.05->0.10 to compensate, preserving total additive brightness). The skip happens
+  // BEFORE any rng()/gaussian() draws, so surviving rows consume the exact same seeded-PRNG
+  // sequence every run — determinism depends only on this fixed parity counter and the CSV's
+  // fixed line order, both invariant across runs, so two builds are byte-identical.
+  if (validRow % 2 === 1) {
+    validRow++
+    continue
+  }
+  validRow++
 
   const raRad = raDeg * DEG
   const decRad = decDeg * DEG
