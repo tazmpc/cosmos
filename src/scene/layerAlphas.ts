@@ -17,7 +17,7 @@ const lg = Math.log10
 
 /** Start and end of the interior<->exterior Milky Way handoff (kpc). The two layers share this
  *  ONE band and split it complementarily — see the note in layerAlphas. Log-midpoint (where they
- *  are equal) is sqrt(12*35) ~ 20.5 kpc. */
+ *  are equal) is sqrt(12*28) ~ 18.3 kpc. */
 const MW_HANDOFF_LO_KPC = 12
 const MW_HANDOFF_HI_KPC = 28
 

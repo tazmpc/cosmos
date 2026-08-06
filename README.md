@@ -53,12 +53,15 @@ Pulling back from Earth crosses three layers, crossfaded by distance:
 
 1. **Stars** (728k, Gaia DR3 + HYG) — every point is a real star at its real position,
    sized and colored by its real apparent magnitude from wherever you're standing.
-2. **The Milky Way** — the one non-literal layer, clearly labeled as modeled: sky-plane
-   density is **real** (measured from ~2M Gaia sky positions), but depth along each
-   line of sight is **modeled** (a standard exponential-disk + bulge profile), because
-   individual per-star distances aren't what makes the galaxy legible from outside —
-   its aggregate shape is. It renders as an unresolved glow, not as individually-real
-   stars.
+2. **The Milky Way** — the modeled layers, clearly labeled as such. Two datasets share
+   the job: from **inside** the galaxy you see a layer whose sky-plane density is
+   **real** (measured from a 1M-star Gaia sample — the Great Rift and dust patchiness
+   you see are genuinely in the data) with **modeled** depth along each sight line
+   (exponential disk + spiral arms + dust + bulge). From **outside** (~20 kpc up),
+   it crossfades to a second layer sampled **entirely from that same analytic model** —
+   no Gaia positions — because the measured sky, being Sun-centered, cannot show the
+   galaxy's face-on structure. Both render as unresolved glow, not individually-real
+   stars. Every other point of light in the app remains a real cataloged object.
 3. **Galaxies** (918k, SDSS + 2MRS) — every point is a real cataloged galaxy, positioned
    by its real sky coordinates and redshift-derived distance. Pull back far enough and
    the filaments and voids of the local cosmic web become visible.
@@ -76,7 +79,8 @@ see in the galaxy layer *is the real survey footprint*, not a rendering artifact
 ## Rebuild the galaxy / Milky Way catalogs
 
     npm run galaxies   # SDSS + 2MRS -> public/galaxies.bin (~918k galaxies)
-    npm run milkyway   # Gaia sky density + disk model -> public/milkyway.bin (~2M points)
+    npm run milkyway                # interior: Gaia sky density + model depth -> public/milkyway.bin (1M points)
+    npm run milkyway -- --exterior  # exterior: fully model-sampled -> public/milkyway-ext.bin (1M points)
 
 ## Rebuild the constellation lines
 
