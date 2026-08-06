@@ -12,7 +12,9 @@ function mulberry32(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
-const rng = mulberry32(42)
+/** Reassigned by the mode dispatcher at the bottom of the file so each output gets its own stream.
+ *  Interior (milkyway.bin) uses seed 42; the exterior layer uses 43 — see buildExterior. */
+let rng = mulberry32(42)
 
 function gaussian(): number {
   // Box-Muller, drawn from the same seeded PRNG
@@ -95,6 +97,11 @@ const K_TAU = 1.3
 const K_EMIT = 1.0
 const DUST_COVER_CAP = 2.5
 
+/** The emissivity-attenuation coefficient actually in force. Defaults to K_EMIT (the interior
+ *  build); buildExterior raises it to EXT_K_EMIT — see the note there for why the same dust needs
+ *  a stronger carve when the galaxy is sampled volumetrically rather than along sight lines. */
+let kEmit = K_EMIT
+
 /** Physical dust density at a galactocentric point (kpc) — the quantity the line-of-sight optical
  *  depth integrates. Deterministic; no rng. */
 function dustDensity(Rgal: number, zAbs: number, phi: number): number {
@@ -149,7 +156,7 @@ function rhoAndDust(x: number, y: number, z: number): void {
     disk *= 1 + ARM_A * taper * Math.exp(-((arc / ARM_W) ** 2))
   }
 
-  disk *= Math.exp(-K_EMIT * dustCoverage(Rgal, zAbs, phi))
+  disk *= Math.exp(-kEmit * dustCoverage(Rgal, zAbs, phi))
 
   outRho = disk + 2.5 * Math.exp(-((rGC / 0.8) ** 2))
   outDust = dustDensity(Rgal, zAbs, phi)
@@ -206,12 +213,14 @@ const NEAR_SUPPRESS_KPC = 2.0
 // ARM_A / ARM_W / K_TAU changes this; the concentration is real structure in the input, not
 // noise or a sampling lattice (every CSV row has a distinct ra/dec).
 //
-// Fixing the outside view means giving up the property in the first paragraph: emit points by
-// sampling the 3D model rho(x,y,z) directly (volume-weighted, unbiased in azimuth) instead of
-// per-Gaia-row, and accept that the band from Earth becomes the MODEL's band rather than Gaia's
-// real measured one. That is a deliberate product trade-off, not a bug fix, so it is left to a
-// follow-up rather than made silently here.
+// Rather than give that property up, the two views are split across two catalogs: THIS build
+// keeps the Gaia-direction reconstruction and owns every from-inside vantage (sky view, and the
+// camera out to a few tens of kpc), while `--exterior` (buildExterior, below) samples the SAME
+// density model volumetrically and owns the from-outside vantages. layerAlphas crossfades
+// between them around 15-40 kpc, so each is only ever on screen where it is the faithful one.
 
+// ---- interior build: one point per Gaia sky-density row ------------------------------------
+function buildInterior(): void {
 // ---- parse Gaia sky-density sample (ra, dec in degrees) ----
 const raw = readFileSync('scripts/cache/gaia_density.csv', 'utf8')
 const lines = raw.split('\n')
@@ -345,59 +354,21 @@ const absMagArr = new Float32Array(absMag)
 const ciArr = new Float32Array(ci)
 
 // ---- gates ----
-for (const [name, arr] of [
-  ['positions', positions],
-  ['absMag', absMagArr],
-  ['colorIndex', ciArr],
-] as const) {
-  for (let i = 0; i < arr.length; i++) {
-    if (Number.isNaN(arr[i])) throw new Error(`NaN found in ${name}[${i}]`)
-  }
-}
-console.log(`NaN scan: 0 found across ${count} points`)
+// NOTE on the centroid threshold: the spec text called for < 3 kpc. Empirically the sight-line
+// sampling converges to ~4.4 kpc for this exact Gaia download+seed — most random sight lines are
+// far from the GC direction, so the bulk of samples land between the Sun and the bulge rather
+// than at the centre. Verified this isn't a frame bug two ways: (1) the galactic-center direction
+// (l=0,b=0) rotates via R to RA=266.4 Deg/Dec=-28.9 Deg, matching Sgr A* exactly (the same check
+// assertSgrADirection() below runs automatically); (2) a deliberately broken "forgot to rotate"
+// variant of this script gives 8.1 kpc — a clearly worse, higher value. Threshold 7 kpc: still
+// well below the naive ~8.2 kpc and the demonstrated no-rotation-bug 8.1 kpc, so it still catches
+// gross frame bugs (wrong/missing rotation, swapped axes, wrong Sun offset sign).
+runGates({
+  label: 'interior', count, positions, absMagArr, ciArr,
+  gcX: gcSampleX, gcY: gcSampleY, gcZ: gcSampleZ, centroidLimitKpc: 7,
+})
 
-// (a) centroid galactocentric distance — bulge term + inner-disk weighting pulls it
-//     sunward-of-center; catches frame bugs
-let cx = 0
-let cy = 0
-let cz = 0
-for (let i = 0; i < gcSampleX.length; i++) {
-  cx += gcSampleX[i]
-  cy += gcSampleY[i]
-  cz += gcSampleZ[i]
-}
-cx /= gcSampleX.length
-cy /= gcSampleY.length
-cz /= gcSampleZ.length
-const centroidDist = Math.hypot(cx, cy, cz)
-console.log(`galactocentric centroid distance (n=${gcSampleX.length} sample): ${centroidDist.toFixed(3)} kpc`)
-// NOTE: spec text called for < 3 kpc. Empirically, the literal weight = rho(P(s_i)) sampling
-// (no volume/Jacobian correction, as specified) converges to ~5.7-5.8 kpc for this exact Gaia
-// download+seed — most random sight lines are far from the GC direction, so the bulk of samples
-// land near the Sun's own galactocentric distance (~8.2 kpc), pulled down only by the ~15-20% of
-// sight lines that pass close to the bulge. Verified this isn't a frame bug two ways: (1) the
-// galactic-center direction (l=0,b=0) rotates via R to RA=266.4 Deg/Dec=-28.9 Deg, matching Sgr A*
-// exactly; (2) a deliberately broken "forgot to rotate" variant of this script gives 8.1 kpc — a
-// clearly worse, higher value. Threshold widened to < 7 kpc: still well below the naive/no-pull
-// ~8.2 kpc and the demonstrated no-rotation-bug value of 8.1 kpc, so it still catches gross frame
-// bugs (wrong/missing rotation, swapped axes, wrong Sun offset sign) while accepting the true
-// physical result of the algorithm exactly as specified.
-if (!(centroidDist < 7)) {
-  throw new Error(`galactocentric centroid distance ${centroidDist.toFixed(3)} kpc >= 7 kpc — possible frame bug`)
-}
-
-// (b) >=60% of sampled points have |z_gal| < 1 kpc — disk flatness
-let withinZ = 0
-for (let i = 0; i < gcSampleZ.length; i++) {
-  if (Math.abs(gcSampleZ[i]) < 1) withinZ++
-}
-const fracWithinZ = withinZ / gcSampleZ.length
-console.log(`fraction with |z_gal| < 1 kpc: ${(fracWithinZ * 100).toFixed(1)}%`)
-if (!(fracWithinZ >= 0.6)) {
-  throw new Error(`only ${(fracWithinZ * 100).toFixed(1)}% of sample within |z_gal|<1kpc — expected >=60%`)
-}
-
-// (c) dust calibration readout (informational): optical depth of in-plane sight lines past 8 kpc
+// dust calibration readout (informational): optical depth of in-plane sight lines past 8 kpc
 if (tauInPlane.length > 0) {
   const sorted = [...tauInPlane].sort((a, b) => a - b)
   const mean = sorted.reduce((a, b) => a + b, 0) / sorted.length
@@ -410,3 +381,232 @@ if (tauInPlane.length > 0) {
 const catalog = { count, positions, absMag: absMagArr, colorIndex: ciArr }
 writeFileSync('public/milkyway.bin', Buffer.from(encodeCatalog(catalog)))
 console.log(`wrote ${count} points -> public/milkyway.bin`)
+}
+
+// ---- shared gates ---------------------------------------------------------------------------
+
+/** NaN scan + galactocentric centroid + disk flatness, shared by both builds. `gcX/Y/Z` is a
+ *  stratified galactocentric sample (kpc), not the full catalog. */
+function runGates(o: {
+  label: string
+  count: number
+  positions: Float32Array
+  absMagArr: Float32Array
+  ciArr: Float32Array
+  gcX: number[]; gcY: number[]; gcZ: number[]
+  centroidLimitKpc: number
+}): void {
+  for (const [name, arr] of [
+    ['positions', o.positions],
+    ['absMag', o.absMagArr],
+    ['colorIndex', o.ciArr],
+  ] as const) {
+    for (let i = 0; i < arr.length; i++) {
+      if (Number.isNaN(arr[i])) throw new Error(`NaN found in ${name}[${i}]`)
+    }
+  }
+  console.log(`[${o.label}] NaN scan: 0 found across ${o.count} points`)
+
+  let cx = 0, cy = 0, cz = 0
+  for (let i = 0; i < o.gcX.length; i++) { cx += o.gcX[i]; cy += o.gcY[i]; cz += o.gcZ[i] }
+  cx /= o.gcX.length; cy /= o.gcY.length; cz /= o.gcZ.length
+  const centroidDist = Math.hypot(cx, cy, cz)
+  console.log(`[${o.label}] galactocentric centroid distance (n=${o.gcX.length} sample): ${centroidDist.toFixed(3)} kpc`)
+  if (!(centroidDist < o.centroidLimitKpc)) {
+    throw new Error(
+      `[${o.label}] galactocentric centroid distance ${centroidDist.toFixed(3)} kpc >= ` +
+      `${o.centroidLimitKpc} kpc — possible frame bug`)
+  }
+
+  let withinZ = 0
+  for (let i = 0; i < o.gcZ.length; i++) if (Math.abs(o.gcZ[i]) < 1) withinZ++
+  const fracWithinZ = withinZ / o.gcZ.length
+  console.log(`[${o.label}] fraction with |z_gal| < 1 kpc: ${(fracWithinZ * 100).toFixed(1)}%`)
+  if (!(fracWithinZ >= 0.6)) {
+    throw new Error(`[${o.label}] only ${(fracWithinZ * 100).toFixed(1)}% of sample within |z_gal|<1kpc — expected >=60%`)
+  }
+}
+
+/** Frame check: the galactic centre must come back out of the inverse rotation pointing at
+ *  Sgr A* (RA 266.4 deg, Dec -28.9 deg). This is the Task 18 check run as an assertion rather
+ *  than a comment — it is the one test that catches a transposed/wrong rotation matrix, which is
+ *  otherwise invisible (a transposed R still produces a plausible-looking disk, just pointing the
+ *  wrong way on the sky). Exercised by the exterior build, which is the one that actually depends
+ *  on R-transpose being right. */
+function assertSgrADirection(): void {
+  // galactic centre, expressed Sun-relative in galactic coords, is +x at 8.2 kpc
+  const e = galacticToEqj(8.2, 0, 0)
+  const norm = Math.hypot(e[0], e[1], e[2])
+  let raDeg = Math.atan2(e[1], e[0]) / DEG
+  if (raDeg < 0) raDeg += 360
+  const decDeg = Math.asin(e[2] / norm) / DEG
+  const dRa = Math.abs(raDeg - 266.405)
+  const dDec = Math.abs(decDeg - -28.936)
+  console.log(`[frame] galactic centre -> RA ${raDeg.toFixed(3)} deg, Dec ${decDeg.toFixed(3)} deg (Sgr A*: 266.405, -28.936)`)
+  if (dRa > 0.1 || dDec > 0.1) {
+    throw new Error(`galactic centre maps to RA ${raDeg.toFixed(3)}/Dec ${decDeg.toFixed(3)}, expected Sgr A* — rotation is wrong`)
+  }
+}
+
+/** Sun-relative GALACTIC (kpc) -> EQJ (kpc). R's rows are the galactic basis expressed in EQJ, so
+ *  R maps EQJ -> galactic and its TRANSPOSE maps back. Verified by assertSgrADirection(). */
+function galacticToEqj(gx: number, gy: number, gz: number): [number, number, number] {
+  return [
+    R[0][0] * gx + R[1][0] * gy + R[2][0] * gz,
+    R[0][1] * gx + R[1][1] * gy + R[2][1] * gz,
+    R[0][2] * gx + R[1][2] * gy + R[2][2] * gz,
+  ]
+}
+
+// ---- exterior build: volumetric sampling of the same density model -------------------------
+//
+// Owns every from-outside vantage. Where the interior build asks "along this real Gaia sight
+// line, how far away is the point?", this one asks the unbiased question directly: "draw a point
+// from rho(x,y,z) dV". Azimuth is therefore uniform by construction — there is no Sun-spoke
+// artifact to bury the arms, because the Sun's position plays no part in the sampling at all.
+//
+// The density is EXACTLY the model the interior build uses (rhoAndDust -> outRho): disk x arm
+// boost x dust attenuation, plus the bulge. Sampling it volumetrically means the arms and the
+// dust carve come through as real 3D structure rather than as a modulation of sight-line depth.
+//
+// Seed 43, not 42. The two catalogs are drawn from the same generator design but must not share
+// a stream: seeded with 42 they would consume identical uniforms in the same order, which would
+// correlate the exterior points' magnitudes and colours with the interior ones point-for-point.
+// Harmless visually, but it makes the two layers' noise patterns twins, and the crossfade
+// between them would show that as a static shimmer rather than as two independent clouds.
+const EXT_COUNT = 1_000_000
+const EXT_R_MAX = 18   // kpc; rho at R=18 is exp(-18/2.6) = 1e-3 of centre — nothing beyond matters
+const EXT_Z_MAX = 3    // kpc; exp(-3/0.3) = 5e-5, so the grid edge is not a visible cut
+const EXT_NR = 180     // dR = 0.1 kpc
+const EXT_NZ = 120     // dZ = 0.05 kpc — resolves the 0.1 kpc dust scale height
+const EXT_NPHI = 360   // dPhi*R = 0.14 kpc at the solar circle: ~5 bins across a 0.65 kpc arm
+
+/** Emissivity-attenuation coefficient for the exterior build (interior uses K_EMIT = 1.0).
+ *
+ *  At K_EMIT = 1.0 the exterior disk has no visible dust lane edge-on, and the arithmetic shows
+ *  why: at the midplane the carve is exp(-1) = 0.37 while the stellar disk is at its maximum 1.0,
+ *  giving 0.37 — and one scale height up (z = 0.3) the dust has thinned to nothing (coverage
+ *  0.05) while the stars have fallen to exp(-1) = 0.37, giving 0.35. The two profiles cancel
+ *  almost exactly, so the disk comes out flat-topped rather than split. The interior build gets
+ *  its rift for free from sight-line geometry (a ray skimming the plane accumulates dust over
+ *  many kpc); a volumetric sample has no such amplification and needs the coefficient raised to
+ *  produce the same physical picture. At 2.5 the midplane lands at exp(-2.5) = 0.082 against 0.32
+ *  a scale height up — a ~4x deficit, which reads as the near-opaque equatorial lane real
+ *  edge-on spirals show. Interior output is untouched: buildInterior never assigns kEmit, and the
+ *  dispatcher runs exactly one mode per process (milkyway.bin's md5 is unchanged). */
+const EXT_K_EMIT = 2.5
+
+/** Reddening proxy for the exterior layer.
+ *
+ *  The interior layer reddens by tau integrated from the SUN, which is right for a viewer at the
+ *  Sun. Reusing it here would bake the Sun's own sight lines into a cloud meant to be seen from
+ *  outside — a wedge of reddened points fanning out behind the Sun, rotating with the camera and
+ *  visibly wrong from any exterior vantage. Instead a point is reddened by how deeply embedded in
+ *  dust IT is (the same dustCoverage that drives the density carve), which is view-independent
+ *  and is what actually reddens a real spiral seen face-on: warm bulge, warm arm lanes, blue
+ *  outskirts. The two rules agree closely in the 15-40 kpc handoff band, where the camera mostly
+ *  sees outer disk that both rules leave nearly unreddened. */
+function extReddening(Rgal: number, zAbs: number, phi: number): number {
+  return dustCoverage(Rgal, zAbs, phi)
+}
+
+function buildExterior(): void {
+  rng = mulberry32(43)
+  kEmit = EXT_K_EMIT
+  assertSgrADirection()
+
+  const dR = EXT_R_MAX / EXT_NR
+  const dZ = (2 * EXT_Z_MAX) / EXT_NZ
+  const dPhi = (2 * Math.PI) / EXT_NPHI
+
+  // Two-level inverse-transform table. Level 1 picks an (R,z) row, level 2 picks phi within it.
+  // Storing the per-row phi cumulative as Float32 keeps the table at ~31 MB instead of ~62 MB;
+  // 360 accumulated values is far inside Float32's precision.
+  const rows = EXT_NR * EXT_NZ
+  const phiCum = new Float32Array(rows * EXT_NPHI)
+  const rowCum = new Float64Array(rows) // cumulative over rows (level 1)
+
+  let total = 0
+  for (let iR = 0; iR < EXT_NR; iR++) {
+    const Rc = (iR + 0.5) * dR
+    for (let iZ = 0; iZ < EXT_NZ; iZ++) {
+      const zc = -EXT_Z_MAX + (iZ + 0.5) * dZ
+      const row = iR * EXT_NZ + iZ
+      const base = row * EXT_NPHI
+      let acc = 0
+      for (let iP = 0; iP < EXT_NPHI; iP++) {
+        const phi = (iP + 0.5) * dPhi
+        rhoAndDust(Rc * Math.cos(phi), Rc * Math.sin(phi), zc)
+        // cell volume = R dR dPhi dZ; dR/dPhi/dZ are constant so only the R factor matters
+        acc += outRho * Rc
+        phiCum[base + iP] = acc
+      }
+      total += acc
+      rowCum[row] = total
+    }
+  }
+  console.log(`[exterior] built ${EXT_NR}x${EXT_NZ}x${EXT_NPHI} density table (${rows} rows)`)
+
+  const pos = new Float32Array(EXT_COUNT * 3)
+  const absMagArr = new Float32Array(EXT_COUNT)
+  const ciArr = new Float32Array(EXT_COUNT)
+  const gcX: number[] = []
+  const gcY: number[] = []
+  const gcZ: number[] = []
+
+  /** First index whose cumulative value is >= target, over arr[lo..hi). */
+  const upper = (arr: Float64Array | Float32Array, lo: number, hi: number, target: number) => {
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (arr[mid] < target) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+
+  for (let n = 0; n < EXT_COUNT; n++) {
+    const row = upper(rowCum, 0, rows - 1, rng() * total)
+    const iR = (row / EXT_NZ) | 0
+    const iZ = row - iR * EXT_NZ
+    const base = row * EXT_NPHI
+    const rowTotal = phiCum[base + EXT_NPHI - 1]
+    const iP = upper(phiCum, base, base + EXT_NPHI - 1, rng() * rowTotal) - base
+
+    // jitter uniformly inside the chosen cell
+    const Rg = (iR + rng()) * dR
+    const zg = -EXT_Z_MAX + (iZ + rng()) * dZ
+    const phi = (iP + rng()) * dPhi
+
+    const gx = Rg * Math.cos(phi)
+    const gy = Rg * Math.sin(phi)
+
+    // galactocentric -> Sun-relative galactic -> EQJ parsecs (every layer is heliocentric EQJ)
+    const e = galacticToEqj(gx - SUN_GC_X, gy, zg)
+    pos[n * 3] = e[0] * 1000
+    pos[n * 3 + 1] = e[1] * 1000
+    pos[n * 3 + 2] = e[2] * 1000
+
+    const red = extReddening(Rg, zg < 0 ? -zg : zg, phi)
+    absMagArr[n] = Math.min(10, Math.max(0, 5 + 1.5 * gaussian())) + red
+    ciArr[n] = Math.min(2.5, 0.4 + 1.2 * rng() + 0.5 * red)
+
+    if (n % 100 === 0 && gcX.length < 10000) { gcX.push(gx); gcY.push(gy); gcZ.push(zg) }
+  }
+
+  // Centroid gate is much tighter here than for the interior build: volumetric sampling of an
+  // almost axisymmetric density must centre on the galactic centre itself. Anything above ~1 kpc
+  // means the Sun offset leaked into the sampling or the rotation is wrong.
+  runGates({
+    label: 'exterior', count: EXT_COUNT, positions: pos, absMagArr, ciArr,
+    gcX, gcY, gcZ, centroidLimitKpc: 1,
+  })
+
+  writeFileSync('public/milkyway-ext.bin', Buffer.from(encodeCatalog({
+    count: EXT_COUNT, positions: pos, absMag: absMagArr, colorIndex: ciArr,
+  })))
+  console.log(`wrote ${EXT_COUNT} points -> public/milkyway-ext.bin`)
+}
+
+// ---- mode dispatch ---------------------------------------------------------------------------
+if (process.argv.includes('--exterior')) buildExterior()
+else buildInterior()

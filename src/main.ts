@@ -72,11 +72,12 @@ loadStarField(engine.scene)
 // out of the current task — it can't stop three catalogs finishing their fetches within a few ms
 // of each other and then chunking back-to-back inside one frame burst). Stars go first and
 // unthrottled: it's the layer the camera is actually looking at from the starting vantage. The
-// Milky Way and galaxy catalogs are only visible from kpc/Mpc away, so nothing is missing while
-// they wait, and spacing their starts ~800 ms apart keeps their chunking passes off the same
-// frames as each other and as the star catalog's.
+// Milky Way (interior + exterior) and galaxy catalogs are only visible from kpc/Mpc away, so
+// nothing is missing while they wait, and spacing their starts ~800 ms apart keeps their chunking
+// passes off the same frames as each other and as the star catalog's.
 const MILKY_WAY_LOAD_DELAY_MS = 800
-const GALAXY_LOAD_DELAY_MS = 1600
+const MILKY_WAY_EXT_LOAD_DELAY_MS = 1600
+const GALAXY_LOAD_DELAY_MS = 2400
 
 let galaxies: GalaxyField | null = null
 setTimeout(() => {
@@ -128,6 +129,27 @@ setTimeout(() => {
     .then(m => { milkyWay = m })
     .catch((err) => console.warn('Milky Way layer failed to load:', err))
 }, MILKY_WAY_LOAD_DELAY_MS)
+
+// Exterior Milky Way — the SAME galaxy, sampled volumetrically from the density model instead of
+// reconstructed along Gaia sight lines (build-milkyway.ts --exterior). The interior catalog above
+// inherits Gaia's real sky map, which is what makes the band and the Great Rift correct from
+// Earth — and also what makes it wrong from outside, where that same concentration reads as a
+// bright straight streak through the core with the spiral arms buried under it. This layer has no
+// preferred direction, so from outside it shows the four arms and the inter-arm dust lanes.
+// layerAlphas hands the two over as one complementary split, so they are never both full.
+//
+// alphaCap 0.075 vs the interior layer's 0.055: matched by eye at the ~20 kpc handoff, where both
+// are near half weight. The exterior catalog spreads the same 1M points over the whole galaxy
+// rather than concentrating ~13% of them into the pencil beam toward the centre, so its projected
+// density — and therefore its additive brightness — is lower for the same per-point alpha.
+let milkyWayExt: PointLayer | null = null
+setTimeout(() => {
+  loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway-ext.bin', {
+    unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.075, minSize: 0.75, maxSize: 2,
+  })
+    .then(m => { milkyWayExt = m })
+    .catch((err) => console.warn('Exterior Milky Way layer failed to load:', err))
+}, MILKY_WAY_EXT_LOAD_DELAY_MS)
 
 // Constellation lines — sky-view-only overlay (d3-celestial line data). Loaded at startup so
 // they're ready the first time sky mode is entered; loadConstellations already warns + degrades
@@ -345,7 +367,15 @@ function frame(realMs: number) {
     // At 1 AU the real MW crossfade ramp is 0 (it's tuned for galactic-scale distances) — but
     // the band genuinely is visible in the night sky from Earth, so sky view overrides it to a
     // fixed value rather than using the ramp's (wrong, for this case) answer.
+    //
+    // Sky view uses the INTERIOR layer only, and explicitly zeroes the exterior one. Standing on
+    // Earth is the vantage the Gaia reconstruction exists for: the band, its star clouds and the
+    // Great Rift are the real measured sky there. The exterior layer is the model's idealised
+    // galaxy — from inside it would overlay a second, smoother, subtly-misaligned band on top of
+    // the real one. (The ramp already gives it 0 at 1 AU; this is belt-and-braces so a future
+    // change to the handoff band can't leak it into sky view.)
     la.milkyWay = 0.6
+    la.milkyWayExt = 0
   }
   galaxySprites.update(camTruePos, la.galaxies)
   // Deep-sky objects are exempt from the stars/galaxies LOD crossfade entirely: they're tiny
@@ -382,6 +412,7 @@ function frame(realMs: number) {
   // the framebuffer height (window resize / dynamic-resolution governor) to hold a fixed angular size.
   brightStars?.update(camTruePos, la.stars, engine.camera, engine.renderer.domElement.height)
   milkyWay?.update(camTruePos, la.milkyWay, engine.camera)
+  milkyWayExt?.update(camTruePos, la.milkyWayExt, engine.camera)
   galaxies?.update(camTruePos, la.galaxies, engine.camera)
 
   hudName.textContent = controls.focus.name
