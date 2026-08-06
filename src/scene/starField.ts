@@ -180,6 +180,18 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
   const binRes = await fetch(url)
   if (!binRes.ok) throw new Error(`${url} fetch failed`)
   const decoded = decodeCatalog(await binRes.arrayBuffer())
+
+  // Yield the main thread before chunking. chunkCatalog is a single synchronous ~140 ms pass on a
+  // 1M-point catalog, and a fetch resolving mid-gesture would otherwise run it inside whatever
+  // frame the user is currently interacting with — a visible hitch right at startup, which is
+  // exactly when the user is first grabbing the camera. requestIdleCallback defers it to a moment
+  // the browser reports as idle; setTimeout(0) is the Safari fallback (still a fresh task, so the
+  // pending input/render work in the current task gets to finish first).
+  await new Promise<void>((resolve) => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(() => resolve())
+    else setTimeout(resolve, 0)
+  })
+
   const { catalog, chunks, newIndexOf } = chunkCatalog(decoded, CHUNK_TARGET)
 
   const geo = buildPointGeometry(catalog)
@@ -204,6 +216,11 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
     const p = new THREE.Points(g, mat)
     p.frustumCulled = false // shader-space positions; three's culling would use wrong bounds — we cull manually below
     p.matrixAutoUpdate = false
+    // Explicit safe default: nothing is drawn until the first update() decides what's visible.
+    // Otherwise the state between "layer added to the scene" and "first update()" depends on
+    // microtask/frame ordering, and in the window where it lands, EVERY chunk would draw the same
+    // vertices the whole-catalog child also draws — the full catalog rendered ~250 times over.
+    p.visible = false
     group.add(p)
     return p
   })

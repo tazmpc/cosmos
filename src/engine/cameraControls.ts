@@ -9,6 +9,7 @@ export interface Focusable {
 }
 
 const MAX_DIST_AU = 4e14 // ~1.9 Gpc, just beyond the deepest galaxy in the catalog
+const PITCH_LIMIT = 1.52 // rad ≈ 87.1° — see setOrientation
 
 export class FocusOrbitControls {
   focus: Focusable
@@ -32,10 +33,10 @@ export class FocusOrbitControls {
     })
     canvas.addEventListener('pointermove', (e) => {
       if (!this.enabled || !this.dragging) return
-      this.yaw -= (e.clientX - this.lastX) * 0.005
-      this.pitch += (e.clientY - this.lastY) * 0.005
-      // ±1.52 rad ≈ 87.1°: lookAt-based orientation becomes roll-unstable as the view direction approaches camera.up (+Z)
-      this.pitch = Math.max(-1.52, Math.min(1.52, this.pitch))
+      this.setOrientation(
+        this.yaw - (e.clientX - this.lastX) * 0.005,
+        this.pitch + (e.clientY - this.lastY) * 0.005,
+      )
       this.lastX = e.clientX; this.lastY = e.clientY
     })
     canvas.addEventListener('pointerup', () => { this.dragging = false })
@@ -48,6 +49,15 @@ export class FocusOrbitControls {
       this.distance *= Math.exp(e.deltaY * 0.0012)
       this.clampDistance()
     }, { passive: false })
+  }
+
+  /** Sets the orbit angles (radians), applying the pitch clamp. Used by the drag handler and by
+   *  callers that need to address a specific vantage (the dev camera hook in main.ts). */
+  setOrientation(yaw: number, pitch: number): void {
+    this.yaw = yaw
+    // ±1.52 rad ≈ 87.1°: lookAt-based orientation becomes roll-unstable as the view direction
+    // approaches camera.up (+Z), so the poles are deliberately unreachable.
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch))
   }
 
   setFocus(f: Focusable, distance?: number): void {

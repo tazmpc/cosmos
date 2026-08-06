@@ -49,6 +49,68 @@ export function hipsUrl(raHours: number, decDeg: number, fovDeg: number): string
   )
 }
 
+/** Vignette shape: full strength out to VIGNETTE_INNER, faded to nothing by VIGNETTE_OUTER, both
+ * measured in units of HALF the image width (so 1.0 is the edge midpoint and ~1.41 is a corner —
+ * corners therefore vanish well before the edge midpoints do, which is what makes the frame read
+ * as round rather than as a clipped square). */
+const VIGNETTE_INNER = 0.62
+const VIGNETTE_OUTER = 0.98
+
+/** Radial vignette multiplier at normalized radius `r` (half-widths from the image centre). */
+export function vignetteFalloff(r: number): number {
+  if (r <= VIGNETTE_INNER) return 1
+  if (r >= VIGNETTE_OUTER) return 0
+  const t = (r - VIGNETTE_INNER) / (VIGNETTE_OUTER - VIGNETTE_INNER)
+  return 1 - t * t * (3 - 2 * t) // smoothstep, so there's no visible ring where the falloff starts
+}
+
+/** Returns a copy of `source` with a radial vignette multiplied in, or `source` itself if the
+ * image can't be processed (no DOM, no decoded bitmap, tainted canvas).
+ *
+ * hips2fits cutouts are square TAN projections, and these sprites blend ADDITIVELY — so an
+ * unvignetted photo announces itself as a glowing rectangle pasted onto the sky, worst of all
+ * near the galactic plane where the background it's added to is already bright. RGB is multiplied
+ * toward black rather than the alpha being faded because additive blending ignores alpha's usual
+ * "let the background through" meaning: what has to go to zero is the emitted colour itself. */
+function vignetteTexture(source: THREE.Texture): THREE.Texture {
+  const img = source.image as (CanvasImageSource & { width?: number; height?: number }) | undefined
+  if (typeof document === 'undefined' || !img || !img.width || !img.height) return source
+  try {
+    const w = img.width
+    const h = img.height
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return source
+    ctx.drawImage(img, 0, 0, w, h)
+    const data = ctx.getImageData(0, 0, w, h)
+    const px = data.data
+    const cx = w / 2
+    const cy = h / 2
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = (x + 0.5 - cx) / cx
+        const dy = (y + 0.5 - cy) / cy
+        const f = vignetteFalloff(Math.hypot(dx, dy))
+        if (f >= 1) continue
+        const i = (y * w + x) * 4
+        px[i] *= f
+        px[i + 1] *= f
+        px[i + 2] *= f
+      }
+    }
+    ctx.putImageData(data, 0, 0)
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.needsUpdate = true
+    return tex
+  } catch (err) {
+    console.warn('objectImagery: vignette failed, using the raw photo texture.', err)
+    return source
+  }
+}
+
 export interface ObjectImagery {
   /** Call once per frame with the camera's true heliocentric position (AU) and the frame delta
    * (seconds) — internally throttles the actual proximity sweep to once per second. */
@@ -86,7 +148,7 @@ export function createObjectImagery(
         texture.colorSpace = THREE.SRGBColorSpace
         texture.needsUpdate = true
         const material = target.sprite.material as THREE.SpriteMaterial
-        material.map = texture
+        material.map = vignetteTexture(texture)
         material.needsUpdate = true
         const distAu = target.distPc * PC_TO_AU
         const sizeAu = 2 * distAu * Math.tan((fovDeg / 2) * (Math.PI / 180))

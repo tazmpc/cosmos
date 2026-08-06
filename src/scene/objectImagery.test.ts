@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as THREE from 'three'
-import { createObjectImagery, hipsUrl, type HipsTextureLoader, type ImageTarget } from './objectImagery'
+import { createObjectImagery, hipsUrl, vignetteFalloff, type HipsTextureLoader, type ImageTarget } from './objectImagery'
 import { PC_TO_AU, AU_PER_LY } from '../data/units'
 
 function makeTarget(id: string, overrides: Partial<ImageTarget> = {}): ImageTarget {
@@ -120,5 +120,44 @@ describe('createObjectImagery', () => {
     const imagery = createObjectImagery([target], loader)
     imagery.focus('m42')
     expect(loader.calls).toHaveLength(1)
+  })
+})
+
+describe('vignetteFalloff', () => {
+  it('leaves the middle of the photo untouched', () => {
+    expect(vignetteFalloff(0)).toBe(1)
+    expect(vignetteFalloff(0.5)).toBe(1)
+    expect(vignetteFalloff(0.62)).toBe(1)
+  })
+
+  it('reaches zero before the edge midpoint, so corners are gone entirely', () => {
+    expect(vignetteFalloff(0.98)).toBe(0)
+    expect(vignetteFalloff(1.0)).toBe(0)
+    expect(vignetteFalloff(Math.SQRT2)).toBe(0) // a corner
+  })
+
+  it('falls off smoothly and monotonically in between', () => {
+    let prev = 1
+    for (let r = 0.62; r <= 0.98; r += 0.02) {
+      const v = vignetteFalloff(r)
+      expect(v).toBeLessThanOrEqual(prev + 1e-12)
+      expect(v).toBeGreaterThanOrEqual(0)
+      prev = v
+    }
+    expect(vignetteFalloff(0.8)).toBeGreaterThan(0.3)
+    expect(vignetteFalloff(0.8)).toBeLessThan(0.7)
+  })
+})
+
+describe('photo vignette', () => {
+  it('keeps the loaded texture as-is when there is no DOM canvas to process it with', () => {
+    // Node test env: vignetteTexture must degrade to the raw texture rather than throwing.
+    const loader = new FakeLoader()
+    const target = makeTarget('m42')
+    const imagery = createObjectImagery([target], loader)
+    imagery.focus('m42')
+    const photoTexture = new THREE.Texture()
+    loader.calls[0].onLoad(photoTexture)
+    expect((target.sprite.material as THREE.SpriteMaterial).map).toBe(photoTexture)
   })
 })

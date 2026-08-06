@@ -7,6 +7,7 @@ import { createSolarSystem, updatePositions, repositionMeshes, updateEarthNight,
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
+import { createBrightStarHalos, type BrightStarHalos } from './scene/brightStars'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
 import { createGalaxySprites, createDeepSkySprites } from './scene/galaxySprites'
 import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets } from './scene/objectImagery'
@@ -33,11 +34,16 @@ const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 const orbits = createOrbitLines(engine.scene, clock.now())
 
 let stars: StarField | null = null
+let brightStars: BrightStarHalos | null = null
 showBanner('Loading star catalog…')
 loadStarField(engine.scene)
   .then(s => {
     stars = s
     hideBanner()
+    // Glare halos (soft core + 4 diffraction spikes) on the ~200 brightest stars as seen from
+    // Earth — the point shader clamps every star to the same maximum dot, so without this Sirius
+    // looks exactly like any other star.
+    brightStars = createBrightStarHalos(engine.scene, s.catalog)
     const searchEntries: SearchEntry[] = [
       ...planets.map(p => ({
         name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30,
@@ -61,10 +67,23 @@ loadStarField(engine.scene)
   })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
 
+// Startup load stagger. Each point layer ends its load with one synchronous ~140 ms chunkCatalog
+// pass (loadPointLayer already yields to requestIdleCallback first, but that only moves the pass
+// out of the current task — it can't stop three catalogs finishing their fetches within a few ms
+// of each other and then chunking back-to-back inside one frame burst). Stars go first and
+// unthrottled: it's the layer the camera is actually looking at from the starting vantage. The
+// Milky Way and galaxy catalogs are only visible from kpc/Mpc away, so nothing is missing while
+// they wait, and spacing their starts ~800 ms apart keeps their chunking passes off the same
+// frames as each other and as the star catalog's.
+const MILKY_WAY_LOAD_DELAY_MS = 800
+const GALAXY_LOAD_DELAY_MS = 1600
+
 let galaxies: GalaxyField | null = null
-loadGalaxyField(engine.scene)
-  .then(g => { galaxies = g })
-  .catch(() => showBanner('Galaxy catalog failed to load.'))
+setTimeout(() => {
+  loadGalaxyField(engine.scene)
+    .then(g => { galaxies = g })
+    .catch(() => showBanner('Galaxy catalog failed to load.'))
+}, GALAXY_LOAD_DELAY_MS)
 
 // Curated galaxies (M31/Andromeda, M33, …) rendered as landmark glow sprites on top of the bulk
 // galaxies.bin point cloud — that catalog's redshift pipeline correctly omits the (blueshifted)
@@ -90,19 +109,25 @@ const objectImagery = createObjectImagery([
 // must stay visible across 3 orders of magnitude of camera distance (inside the disk out to
 // ~181 kpc and beyond), and per-point apparent magnitude can't carry that — a synthetic
 // absMag-5 point at 181 kpc has appMag ≈ 26, alpha ≈ 0 at any sane faintMag. So faintMag 30
-// effectively disables the per-point magnitude fade (every point renders) and alphaCap 0.10
+// effectively disables the per-point magnitude fade (every point renders) and a low alphaCap
 // keeps each point subtle enough that 1M additively-blended points read as a soft glow whose
 // brightness IS the density map (the real Gaia sky data). layerAlphas still gates the whole
 // layer in/out by camera distance.
-// (perf: milkyway.bin is now 1M points, built with a 2x stride in build-milkyway.ts — alphaCap
-// doubled 0.05->0.10 here to compensate: half the points at twice the alpha ≈ same total
-// additive energy, so the band's brightness should read the same as before.)
+//
+// alphaCap 0.055: the 2x stride in build-milkyway.ts halved the point count, which by itself
+// argued for doubling 0.05 -> 0.10 to conserve total additive energy. Measured against the dust
+// lanes this build adds, though, 0.10 is too hot — the band saturates toward white and washes
+// the new dark rift back out, which is the whole point of the dust model. 0.055 was picked by
+// comparing both at the edge-on 40 kly vantage: it keeps the rift's contrast while leaving the
+// band's overall brightness close to the pre-stride look.
 let milkyWay: PointLayer | null = null
-loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway.bin', {
-  unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.10, minSize: 0.75, maxSize: 2,
-})
-  .then(m => { milkyWay = m })
-  .catch((err) => console.warn('Milky Way layer failed to load:', err))
+setTimeout(() => {
+  loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway.bin', {
+    unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.055, minSize: 0.75, maxSize: 2,
+  })
+    .then(m => { milkyWay = m })
+    .catch((err) => console.warn('Milky Way layer failed to load:', err))
+}, MILKY_WAY_LOAD_DELAY_MS)
 
 // Constellation lines — sky-view-only overlay (d3-celestial line data). Loaded at startup so
 // they're ready the first time sky mode is entered; loadConstellations already warns + degrades
@@ -353,6 +378,9 @@ function frame(realMs: number) {
   // site and here reads the layers (they only write shader uniforms + per-chunk visibility), so
   // the move is behaviour-neutral apart from the culling being one frame fresher.
   stars?.update(camTruePos, la.stars, engine.camera)
+  // Halos ride the star layer's own crossfade, and need the CURRENT fov (sky view zooms it) plus
+  // the framebuffer height (window resize / dynamic-resolution governor) to hold a fixed angular size.
+  brightStars?.update(camTruePos, la.stars, engine.camera, engine.renderer.domElement.height)
   milkyWay?.update(camTruePos, la.milkyWay, engine.camera)
   galaxies?.update(camTruePos, la.galaxies, engine.camera)
 
@@ -363,3 +391,25 @@ function frame(realMs: number) {
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
+
+// Dev-only camera hook, alongside the existing __cosmosStats counters in starField.ts. The visual
+// gates for this scene ("does the Milky Way show spiral arms from 300 kly", "is the dust rift
+// visible edge-on from 40 kly") are only checkable from a specific vantage, and the only way to
+// reach one through the UI is a long stream of drag/wheel gestures that lands somewhere slightly
+// different every time. This makes those vantages addressable and repeatable. `import.meta.env.DEV`
+// is a compile-time constant, so the whole block folds away in a production build.
+if (import.meta.env.DEV) {
+  ;(window as unknown as { __cosmosDev?: unknown }).__cosmosDev = {
+    /** Park the camera `distanceAu` from the focus at the given orbit angles (radians). A pitch of
+     *  ±PI/2 looks down on the galactic plane from the pole; a pitch of 0 is edge-on to it. */
+    setView(distanceAu: number, yaw?: number, pitch?: number) {
+      flyer.cancel()
+      controls.distance = distanceAu
+      controls.setOrientation(yaw ?? 0.5, pitch ?? 0.4)
+    },
+    controls,
+    engine,
+    get layerAlphas() { return layerAlphas(camTruePos.length()) },
+    get camDistAu() { return camTruePos.length() },
+  }
+}
