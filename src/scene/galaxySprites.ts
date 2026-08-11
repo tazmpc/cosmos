@@ -64,11 +64,22 @@ function isElliptical(def: GalaxyDef): boolean {
   return def.type.toLowerCase().includes('elliptical')
 }
 
-/** Renders the ~26 curated galaxies (galaxies.ts) as named glow sprites — these are landmarks
- * sitting on top of the bulk galaxies.bin point cloud, and exist because that catalog's redshift
- * pipeline correctly omits the (blueshifted) Local Group, so flying to e.g. Andromeda would
- * otherwise arrive at visually empty space. Cluster entries are skipped: a cluster isn't a single
- * object and has no one diameter to size a glow from. */
+/** Renders the ~26 curated galaxies (galaxies.ts) as named glow sprites, drawn on top of the
+ * bulk galaxies.bin point cloud. These originally existed to fill a real gap: galaxies.bin's
+ * redshift-only sources (SDSS/2MRS/6dFGS) structurally can't carry the blueshifted Local Group,
+ * so flying to e.g. Andromeda used to arrive at visually empty space.
+ *
+ * Since the galaxy catalog v2 merge (Cosmicflows-4, phase 9 task 29), M31/M33 and most other
+ * curated galaxies also exist as real galaxies.bin points at (essentially) this same position —
+ * CF4 carries measured, not redshift-derived, distances, so it's the one source that *does*
+ * reach the Local Group. The sprite and the catalog point now co-render additively at the same
+ * spot. This is intentional, not a leftover: the catalog point reads as the galaxy's bright
+ * nucleus inside the sprite's glow/photo, which is the visually correct thing for a real nucleus
+ * to look like — and suppressing genuine catalog data just to avoid a redundant-looking dot
+ * would be hiding real information for no benefit. Kept as designed.
+ *
+ * Cluster entries are skipped: a cluster isn't a single object and has no one diameter to size
+ * a glow from. */
 export function createGalaxySprites(scene: THREE.Scene): GalaxySpriteLayer {
   const texture = makeGlowTexture()
   const group = new THREE.Group()

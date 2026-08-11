@@ -1,3 +1,14 @@
+/** Builds public/galaxies.bin from four merged sources: SDSS SpecPhoto + 2MRS (redshift-derived
+ *  comoving distances) and, since the galaxy catalog v2 merge (phase 9 task 29), 6dFGS (fills
+ *  the southern sky the first two left thin) and Cosmicflows-4 (measured, not redshift-derived,
+ *  distances — the only source reaching the blueshifted Local Group). See src/data/galaxyDedup.ts
+ *  for the cross-survey merge rule.
+ *
+ *  Known/accepted overlap: CF4 puts M31/M33 and most other curated galaxies (src/data/galaxies.ts)
+ *  into this catalog at essentially the same position as their hand-placed glow sprites
+ *  (src/scene/galaxySprites.ts). This is intentional — the catalog point reads as the galaxy's
+ *  bright nucleus inside the sprite/photo — not something to filter out here. */
+
 import { readFileSync, writeFileSync } from 'node:fs'
 import { encodeCatalog } from '../src/data/catalogFormat'
 import { raDecDistToXyz } from '../src/data/starMath'

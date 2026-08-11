@@ -42,6 +42,18 @@ function raSearchRadius(decDeg: number): number {
   return Math.min(180, Math.ceil(SEP_THRESHOLD_DEG / cosDec))
 }
 
+/** The declination (within this 1-degree bin's [decIdx-90, decIdx-90+1) range) closest to a
+ *  pole — i.e. the edge with the smallest cos(dec), so sizing the RA search radius from THIS
+ *  value is a safe upper bound for every point that could land in the bin, not just the query
+ *  row's own declination. Fixes a real bug: sizing the radius from only the query row's own
+ *  dec under-searches when the OTHER row in a duplicate pair sits closer to the pole within a
+ *  neighboring dec band (reproduced with real pairs at Dec > 85 degrees). */
+function bandExtremeDecDeg(decIdx: number): number {
+  const lo = decIdx - 90
+  const hi = lo + 1
+  return Math.abs(lo) > Math.abs(hi) ? lo : hi
+}
+
 function cellKey(raIdx: number, decIdx: number): number {
   return decIdx * 360 + raIdx
 }
@@ -77,7 +89,6 @@ export function dedupe(rows: GalaxyRow[]): { kept: GalaxyRow[]; removedBySource:
     const row = rows[i]
     const raIdx = raCellIndex(row.raDeg)
     const decIdx = decCellIndex(row.decDeg)
-    const raRadius = raSearchRadius(row.decDeg)
 
     // Local-Group win: a CF4 row with negative (blueshifted) cz is never removed by the
     // dedup rule — these are the whole point of pulling in CF4 (measured, not redshift,
@@ -89,6 +100,9 @@ export function dedupe(rows: GalaxyRow[]): { kept: GalaxyRow[]; removedBySource:
       searchLoop: for (let dDec = -1; dDec <= 1; dDec++) {
         const nDecIdx = decIdx + dDec
         if (nDecIdx < 0 || nDecIdx >= DEC_BINS) continue
+        // Radius sized per-band from that band's own nearest-to-pole edge (not the query
+        // row's declination) — see bandExtremeDecDeg.
+        const raRadius = raSearchRadius(bandExtremeDecDeg(nDecIdx))
         for (let dRa = -raRadius; dRa <= raRadius; dRa++) {
           const nRaIdx = ((raIdx + dRa) % 360 + 360) % 360
           const bucket = grid.get(cellKey(nRaIdx, nDecIdx))

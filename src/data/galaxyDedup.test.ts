@@ -129,6 +129,24 @@ describe('dedupe', () => {
     expect(removedBySource.sdss).toBe(1)
   })
 
+  it('catches a duplicate pair with DIFFERING near-pole declinations, where sizing the RA search radius from only the query row\'s own dec would miss it', () => {
+    // dec 89.9 (cf4, higher preference — inserted into the grid first) vs dec 89.0 (sdss,
+    // queried second) at raDeg 70 vs 0: true great-circle separation is ~0.97 degrees
+    // (verified via haversine) — a real duplicate. The pre-fix bug sized the RA search
+    // radius from the QUERY row's own declination (sdss, 89.0 -> only 58 RA-cells, less
+    // than the 70 needed to reach the kept cf4 point) and missed this pair — confirmed by
+    // running this exact case against the pre-fix implementation. Sizing per-band from the
+    // nearest-to-pole edge of the band being searched (bandExtremeDecDeg) catches it: the
+    // band here extends to the pole itself (edge 90 degrees), triggering a full RA sweep.
+    const rows = [
+      row({ source: 'cf4', raDeg: 70, decDeg: 89.9, distMpc: 40.1, czKms: 3010 }),
+      row({ source: 'sdss', raDeg: 0, decDeg: 89.0, distMpc: 40, czKms: 3000 }),
+    ]
+    const { kept, removedBySource } = dedupe(rows)
+    expect(kept.length).toBe(1)
+    expect(removedBySource.sdss).toBe(1)
+  })
+
   it('performance smoke: 200k synthetic rows dedupe in under 5 seconds', () => {
     const n = 200_000
     const rows: GalaxyRow[] = new Array(n)
