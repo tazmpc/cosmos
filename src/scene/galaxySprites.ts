@@ -127,6 +127,34 @@ export function createGalaxySprites(scene: THREE.Scene): GalaxySpriteLayer {
   }
 }
 
+/** A single glow sprite for one dynamically-registered object, created on demand rather than as
+ *  part of a preallocated group — this is OpenNGC's register-on-focus path (main.ts): with ~12.4k
+ *  objects there's no reason to build a sprite for one until the user actually flies to it. Same
+ *  visuals as the curated groups above (round additive glow, opacity 0.5), but the caller owns
+ *  per-frame position updates (`sprite.position = truePos - camTruePosAu`) since there's no shared
+ *  group/update() to do it for a single ad hoc sprite. */
+export function createStandaloneGlowSprite(
+  scene: THREE.Scene, raHours: number, decDeg: number, distPc: number, diameterLy: number,
+): { sprite: THREE.Sprite; truePos: THREE.Vector3 } {
+  const texture = makeGlowTexture()
+  const [x, y, z] = raDecDistToXyz(raHours, decDeg, distPc)
+  const truePos = new THREE.Vector3(x * PC_TO_AU, y * PC_TO_AU, z * PC_TO_AU)
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.5,
+  })
+  const sprite = new THREE.Sprite(material)
+  const diameterAu = diameterLy * AU_PER_LY
+  sprite.scale.set(diameterAu, diameterAu, 1)
+
+  scene.add(sprite)
+  return { sprite, truePos }
+}
+
 /** Renders the ~15 curated deep-sky objects (deepSky.ts — nebulae and star clusters) as named
  * glow sprites, the same landmark role as createGalaxySprites but for objects that live inside
  * the Milky Way (star-field distances, parsecs not megaparsecs) rather than out among the

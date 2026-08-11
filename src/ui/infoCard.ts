@@ -2,6 +2,7 @@ import type { PlanetDef } from '../data/planets'
 import type { StarCatalog } from '../data/catalogFormat'
 import type { GalaxyDef } from '../data/galaxies'
 import type { DeepSkyDef } from '../data/deepSky'
+import type { OpenNgcObject } from '../data/openNgc'
 import { apparentMagnitude } from '../data/starMath'
 import { PC_TO_LY, PC_TO_AU } from '../data/units'
 import { formatDistance } from './format'
@@ -25,6 +26,20 @@ export function showDeepSkyCard(def: DeepSkyDef): void {
     Type: def.type,
     ...def.facts,
   })
+}
+
+/** OpenNGC objects have no hand-written facts and (almost always) no measured distance — the
+ * card is built entirely from the catalog row instead of a static facts blob. distEstimated is
+ * always true for this dataset (see src/data/openNgc.ts), so Distance is always caveated. */
+export function showOpenNgcCard(obj: OpenNgcObject): void {
+  const facts: Record<string, string> = { Type: obj.type }
+  if (obj.majAxArcmin != null) facts['Apparent size'] = `${obj.majAxArcmin.toFixed(2)}′`
+  if (obj.vmag != null) facts['V magnitude'] = obj.vmag.toFixed(2)
+  facts.Distance = obj.distEstimated
+    ? `~${formatDistance(obj.distPc * PC_TO_AU)} (estimated by type)`
+    : formatDistance(obj.distPc * PC_TO_AU)
+  if (obj.messier != null) facts.Messier = `M${obj.messier}`
+  render(obj.name, facts)
 }
 
 export function showStarCard(catalog: StarCatalog, index: number, name: string): void {

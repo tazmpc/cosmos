@@ -14,6 +14,11 @@ export interface ImageTarget {
   distPc: number
   sprite: THREE.Sprite
   truePos: THREE.Vector3
+  /** When set, used directly as the hips2fits FOV instead of deriving it from diameterLy/distPc
+   *  via angularFovDeg. OpenNGC objects pass this (built from their real MajAx measurement via
+   *  angularFovDegFromArcmin) since their distPc is only ever a type-based placeholder — a
+   *  directly-measured angular size is strictly more accurate than round-tripping through it. */
+  fovDegOverride?: number
 }
 
 /** Minimal interface satisfied by THREE.TextureLoader — narrowed so tests can inject a fake. */
@@ -119,6 +124,14 @@ export interface ObjectImagery {
    * proximity check — the first hips2fits request can take several seconds, so starting it the
    * moment the user commits to flying there (rather than waiting for arrival) hides the latency. */
   focus(id: string): void
+  /** Adds a target that wasn't known at construction time. Idempotent — if `target.id` is already
+   * registered, this is a no-op, leaving its existing fetch state/sprite alone. This is OpenNGC's
+   * register-on-focus path: the curated catalogs (galaxies.ts, deepSky.ts) register everything up
+   * front via the constructor argument, but registering all ~12.4k OpenNGC objects that way would
+   * put them all into the once-a-second proximity sweep for no reason (see PROXIMITY_DIAMETERS —
+   * that sweep is meant to stay small). Instead, an OpenNGC object registers itself the first time
+   * it's focused (main.ts), and behaves exactly like a curated object from then on. */
+  register(target: ImageTarget): void
 }
 
 /** Wires lazy hips2fits photo fetches onto a set of curated-object glow sprites. Each object
@@ -126,9 +139,10 @@ export interface ObjectImagery {
  * texture and size are swapped to the real photo; on failure, a single console.warn fires and
  * the glow sprite is left exactly as it was. */
 export function createObjectImagery(
-  targets: ImageTarget[],
+  initialTargets: ImageTarget[],
   loader: HipsTextureLoader = defaultLoader(),
 ): ObjectImagery {
+  const targets: ImageTarget[] = [...initialTargets]
   const states = new Map<string, FetchState>(targets.map(t => [t.id, 'idle']))
   const byId = new Map(targets.map(t => [t.id, t]))
   let accumS = 0
@@ -136,7 +150,7 @@ export function createObjectImagery(
   function fetchFor(target: ImageTarget): void {
     if (states.get(target.id) !== 'idle') return
     states.set(target.id, 'loading')
-    const fovDeg = angularFovDeg(target.diameterLy, target.distPc)
+    const fovDeg = target.fovDegOverride ?? angularFovDeg(target.diameterLy, target.distPc)
     const url = hipsUrl(target.raHours, target.decDeg, fovDeg)
     loader.load(
       url,
@@ -178,6 +192,12 @@ export function createObjectImagery(
     focus(id) {
       const target = byId.get(id)
       if (target) fetchFor(target)
+    },
+    register(target) {
+      if (byId.has(target.id)) return
+      targets.push(target)
+      byId.set(target.id, target)
+      states.set(target.id, 'idle')
     },
   }
 }

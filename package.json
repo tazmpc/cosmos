@@ -9,6 +9,7 @@
     "test": "vitest run --passWithNoTests",
     "catalog": "tsx scripts/build-catalog.ts",
     "galaxies": "tsx scripts/build-galaxies.ts",
+    "openngc": "tsx scripts/build-openngc.ts",
     "milkyway": "tsx scripts/build-milkyway.ts",
     "constellations": "tsx scripts/build-constellations.ts",
     "start": "npm run build && vite preview --port 5200 --strictPort"

@@ -9,11 +9,12 @@ import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
 import { createBrightStarHalos, type BrightStarHalos } from './scene/brightStars'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
-import { createGalaxySprites, createDeepSkySprites } from './scene/galaxySprites'
-import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets } from './scene/objectImagery'
+import { createGalaxySprites, createDeepSkySprites, createStandaloneGlowSprite } from './scene/galaxySprites'
+import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets, type ImageTarget } from './scene/objectImagery'
 import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
 import { apparentMagnitude } from './data/starMath'
+import { angularFovDegFromArcmin } from './data/angularSize'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
 import { loadConstellations, type ConstellationLines } from './scene/constellations'
 import { search, type SearchEntry } from './ui/search'
@@ -23,8 +24,9 @@ import { galaxyFocusable, GALAXY_ARRIVE_AU } from './scene/galaxyFocus'
 import { deepSkyFocusable, deepSkyMinApproachAu } from './scene/deepSkyFocus'
 import { GALAXIES } from './data/galaxies'
 import { DEEP_SKY } from './data/deepSky'
+import { loadOpenNgc, openNgcFocusable, openNgcMinApproachAu, openNgcDiameterLy, type OpenNgcObject } from './data/openNgc'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, hideCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, hideCard } from './ui/infoCard'
 import { PC_TO_AU } from './data/units'
 
 const engine = createEngine(document.getElementById('app')!)
@@ -35,6 +37,21 @@ const orbits = createOrbitLines(engine.scene, clock.now())
 
 let stars: StarField | null = null
 let brightStars: BrightStarHalos | null = null
+
+// OpenNGC (~12.4k deep-sky objects, public/openngc.json — see scripts/build-openngc.ts) loads in
+// parallel with everything else and merges its search entries in once both it and the star field
+// (which owns search setup) are ready. Silent degrade on failure, like the other lazy catalogs:
+// no banner, just fewer search results.
+const openNgcPromise = loadOpenNgc().catch((err) => {
+  console.warn('OpenNGC catalog failed to load:', err)
+  return [] as OpenNgcObject[]
+})
+let openNgcById = new Map<string, OpenNgcObject>()
+// Glow sprites for OpenNGC objects the user has actually focused, created lazily — see
+// focusOpenNgcImagery below. Position-follows-camera is handled per-frame in frame() since these
+// aren't part of a managed sprite group like the curated galaxy/deep-sky ones.
+const openNgcSpriteFollowers: { sprite: THREE.Sprite; truePos: THREE.Vector3 }[] = []
+
 showBanner('Loading star catalog…')
 loadStarField(engine.scene)
   .then(s => {
@@ -64,6 +81,20 @@ loadStarField(engine.scene)
       })),
     ]
     setupSearch(searchEntries)
+
+    // OpenNGC entries append in once loaded (usually already resolved by the time the star
+    // catalog is — it's a much smaller fetch). `searchEntries` is the same array `search()` reads
+    // on every keystroke (setupSearch closed over this exact reference), so pushing into it later
+    // is enough — no re-setup needed. mag defaults to 12 when V-Mag is unknown, which ranks below
+    // every curated dso/galaxy (mag -26) but roughly among real stars, which is the intent: these
+    // are real but mostly faint/uncatalogued-brightness objects, not landmarks.
+    openNgcPromise.then((rows) => {
+      openNgcById = new Map(rows.map((r) => [r.id, r]))
+      const dsoEntries: SearchEntry[] = rows.map((r) => ({
+        name: r.name, kind: 'dso' as const, key: r.id, mag: r.vmag ?? 12, label: 'deep sky',
+      }))
+      searchEntries.push(...dsoEntries)
+    })
   })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
 
@@ -102,6 +133,29 @@ const objectImagery = createObjectImagery([
   ...galaxyImageTargets(galaxySprites),
   ...deepSkyImageTargets(deepSkySprites),
 ])
+
+// OpenNGC's register-on-focus path (objectImagery.register — see its doc comment): unlike the
+// curated catalogs above, an OpenNGC object gets a glow sprite and joins objectImagery only the
+// first time it's actually focused (search fly-to). Idempotent per id, so re-focusing the same
+// object later just re-triggers objectImagery.focus (itself a no-op once loaded/loading).
+const openNgcRegistered = new Set<string>()
+function focusOpenNgcImagery(obj: OpenNgcObject): void {
+  if (!openNgcRegistered.has(obj.id)) {
+    openNgcRegistered.add(obj.id)
+    const diameterLy = openNgcDiameterLy(obj)
+    const { sprite, truePos } = createStandaloneGlowSprite(engine.scene, obj.raHours, obj.decDeg, obj.distPc, diameterLy)
+    openNgcSpriteFollowers.push({ sprite, truePos })
+    const target: ImageTarget = {
+      id: obj.id, raHours: obj.raHours, decDeg: obj.decDeg, diameterLy, distPc: obj.distPc, sprite, truePos,
+    }
+    // A real MajAx measurement is strictly more accurate for the hips2fits FOV than deriving it
+    // from diameterLy/distPc, since distPc here is only ever a type-based placeholder (see
+    // src/data/openNgc.ts's doc comment).
+    if (obj.majAxArcmin != null) target.fovDegOverride = angularFovDegFromArcmin(obj.majAxArcmin)
+    objectImagery.register(target)
+  }
+  objectImagery.focus(obj.id)
+}
 
 // Milky Way bridge layer — real Gaia sky-plane density, modeled depth. Optional garnish: no
 // loading banner and no error banner on failure, just a console warning.
@@ -252,12 +306,24 @@ function focusEntry(e: SearchEntry): void {
     showGalaxyCard(def)
     objectImagery.focus(def.id)
   } else if (e.kind === 'dso') {
-    const def = DEEP_SKY.find(d => d.id === e.key)!
-    // Arrive a bit beyond the minimum approach so the object is framed, not sat inside — same
-    // "frame it, don't clip it" idea as the galaxy/planet arrival distances above.
-    flyer.start(deepSkyFocusable(def), deepSkyMinApproachAu(def) * 4)
-    showDeepSkyCard(def)
-    objectImagery.focus(def.id)
+    // 'dso' covers both the 15 curated deep-sky objects and the ~12.4k OpenNGC ones (they share
+    // a kind so search ranks/labels them together — see main.ts's searchEntries construction and
+    // search.ts's KIND_ORDER). Curated ids never collide with OpenNGC ones (build-openngc.ts
+    // excludes every curated NGC/IC number from the baked catalog), so this lookup order is
+    // unambiguous: curated wins on the (never-occurring) collision case too.
+    const def = DEEP_SKY.find(d => d.id === e.key)
+    if (def) {
+      // Arrive a bit beyond the minimum approach so the object is framed, not sat inside — same
+      // "frame it, don't clip it" idea as the galaxy/planet arrival distances above.
+      flyer.start(deepSkyFocusable(def), deepSkyMinApproachAu(def) * 4)
+      showDeepSkyCard(def)
+      objectImagery.focus(def.id)
+    } else {
+      const obj = openNgcById.get(e.key as string)!
+      flyer.start(openNgcFocusable(obj), openNgcMinApproachAu(obj) * 4)
+      showOpenNgcCard(obj)
+      focusOpenNgcImagery(obj)
+    }
   } else if (stars) {
     flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
     showStarCard(stars.catalog, e.key as number, e.name)
@@ -385,6 +451,10 @@ function frame(realMs: number) {
   // dims a DSO sprite even while sitting right at its own arrival point (e.g. Omega Centauri at
   // ~5.2 kpc lands mid-ramp, alpha ≈0.41 — visibly dimmer on arrival for no reason).
   deepSkySprites.update(camTruePos, 1.0)
+  // OpenNGC glow sprites (created lazily, one per focused object — see focusOpenNgcImagery)
+  // aren't part of a managed group with its own update(), so their camera-relative position is
+  // maintained here directly, same "position = truePos - camTruePos" rule as the curated groups.
+  for (const f of openNgcSpriteFollowers) f.sprite.position.copy(f.truePos).sub(camTruePos)
   objectImagery.update(camTruePos, dt)
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)

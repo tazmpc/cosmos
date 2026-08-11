@@ -15,3 +15,12 @@ export function angularFovDeg(diameterLy: number, distPc: number): number {
   const angleDeg = 2 * Math.atan(radiusPc / distPc) * (180 / Math.PI) * PADDING
   return Math.min(MAX_FOV_DEG, Math.max(MIN_FOV_DEG, angleDeg))
 }
+
+/** Same padding/clamp as angularFovDeg, but from a directly-measured angular size (arcmin, e.g.
+ *  OpenNGC's MajAx) rather than derived from diameter+distance. Strictly more accurate whenever
+ *  the catalog gives angular size directly — it skips round-tripping through a distance that, for
+ *  OpenNGC, is only ever a type-based placeholder and would otherwise distort the FOV. */
+export function angularFovDegFromArcmin(majAxArcmin: number): number {
+  const angleDeg = (majAxArcmin / 60) * PADDING
+  return Math.min(MAX_FOV_DEG, Math.max(MIN_FOV_DEG, angleDeg))
+}

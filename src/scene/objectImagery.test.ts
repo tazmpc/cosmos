@@ -121,6 +121,64 @@ describe('createObjectImagery', () => {
     imagery.focus('m42')
     expect(loader.calls).toHaveLength(1)
   })
+
+  it('uses fovDegOverride instead of angularFovDeg(diameterLy, distPc) when set', () => {
+    const loader = new FakeLoader()
+    // distPc/diameterLy are deliberately inconsistent with the override, so the test can tell
+    // which route actually drove the request — this mirrors OpenNGC objects, whose distPc is
+    // only ever a type-based placeholder.
+    const target = makeTarget('ngc891', { fovDegOverride: 0.36 })
+    const imagery = createObjectImagery([target], loader)
+    imagery.focus('ngc891')
+    expect(loader.calls[0].url).toContain('fov=0.36')
+  })
+
+  describe('register', () => {
+    it('is idle and un-fetched (not in the proximity sweep) until registered', () => {
+      const loader = new FakeLoader()
+      const imagery = createObjectImagery([], loader)
+      // focus() on an unknown id is a documented no-op (see `focus`'s implementation: byId.get
+      // returns undefined, fetchFor is never called).
+      imagery.focus('ngc4565')
+      expect(loader.calls).toHaveLength(0)
+    })
+
+    it('registers a new target so focus() can fetch it, exactly like a curated target', () => {
+      const loader = new FakeLoader()
+      const imagery = createObjectImagery([], loader)
+      const target = makeTarget('ngc4565', { fovDegOverride: 0.45 })
+      imagery.register(target)
+      imagery.focus('ngc4565')
+      expect(loader.calls).toHaveLength(1)
+      expect(loader.calls[0].url).toContain('fov=0.45')
+    })
+
+    it('is idempotent: registering the same id twice keeps the first target and its state', () => {
+      const loader = new FakeLoader()
+      const imagery = createObjectImagery([], loader)
+      const first = makeTarget('ngc4565', { fovDegOverride: 0.45 })
+      const second = makeTarget('ngc4565', { fovDegOverride: 9.99 })
+      imagery.register(first)
+      imagery.focus('ngc4565') // starts loading against `first`
+      imagery.register(second) // must not reset state or swap in `second`
+      imagery.focus('ngc4565')
+      expect(loader.calls).toHaveLength(1)
+      expect(loader.calls[0].url).toContain('fov=0.45')
+    })
+
+    it('a registered target joins the proximity sweep going forward', () => {
+      const loader = new FakeLoader()
+      const imagery = createObjectImagery([], loader)
+      const diameterAu = 100_000 * AU_PER_LY
+      const target = makeTarget('ngc4565', {
+        diameterLy: 100_000,
+        truePos: new THREE.Vector3(5 * diameterAu, 0, 0),
+      })
+      imagery.register(target)
+      imagery.update(new THREE.Vector3(0, 0, 0), 1)
+      expect(loader.calls).toHaveLength(1)
+    })
+  })
 })
 
 describe('vignetteFalloff', () => {
