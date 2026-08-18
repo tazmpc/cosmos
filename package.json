@@ -13,7 +13,8 @@
     "milkyway": "tsx scripts/build-milkyway.ts",
     "constellations": "tsx scripts/build-constellations.ts",
     "start": "npm run build && vite preview --port 5200 --strictPort",
-    "asteroids": "tsx scripts/build-asteroids.ts"
+    "asteroids": "tsx scripts/build-asteroids.ts",
+    "spacecraft": "tsx scripts/build-spacecraft.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

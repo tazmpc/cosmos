@@ -4,6 +4,7 @@ import type { GalaxyDef } from '../data/galaxies'
 import type { DeepSkyDef } from '../data/deepSky'
 import type { OpenNgcObject } from '../data/openNgc'
 import type { FamousAsteroid } from '../data/asteroids'
+import type { SpacecraftDef } from '../scene/spacecraft'
 import { apparentMagnitude } from '../data/starMath'
 import { PC_TO_LY, PC_TO_AU } from '../data/units'
 import { formatDistance } from './format'
@@ -53,6 +54,19 @@ export function showAsteroidCard(def: FamousAsteroid, orbit: { aAu: number; e: n
     'Distance from Sun': `${orbit.aAu.toFixed(3)} AU (semi-major axis)`,
     'Orbit shape': `eccentricity ${orbit.e.toFixed(3)}, inclination ${orbit.iDeg.toFixed(1)}°`,
     Orbit: 'propagated from MPC orbital elements (two-body)',
+  })
+}
+
+/** Named spacecraft (src/data comes from public/spacecraft.json — see scripts/build-spacecraft.ts).
+ *  `facts` is baked from Horizons-independent hand-written text; the two distances are LIVE,
+ *  computed at card-show time from the interpolated trajectory (src/sim/trajectory.ts) and the
+ *  current Earth position, so they stay correct as sim time advances rather than being baked. */
+export function showSpacecraftCard(def: SpacecraftDef, distSunAu: number, distEarthAu: number): void {
+  render(def.name, {
+    ...def.facts,
+    'Distance from Sun': formatDistance(distSunAu),
+    'Distance from Earth': formatDistance(distEarthAu),
+    Trajectory: 'interpolated from JPL Horizons position vectors',
   })
 }
 

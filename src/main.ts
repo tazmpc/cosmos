@@ -26,13 +26,18 @@ import { GALAXIES } from './data/galaxies'
 import { DEEP_SKY } from './data/deepSky'
 import { loadOpenNgc, openNgcFocusable, openNgcMinApproachAu, openNgcDiameterLy, type OpenNgcObject } from './data/openNgc'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, showAsteroidCard, hideCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, showAsteroidCard, showSpacecraftCard, hideCard } from './ui/infoCard'
 import {
   loadAsteroidField, asteroidFocusable, famousAsteroidEntries, asteroidOrbitSummary,
   ASTEROID_ARRIVE_AU, type AsteroidField,
 } from './scene/asteroidField'
+import {
+  loadSpacecraftField, spacecraftFocusable, spacecraftPositionAt,
+  SPACECRAFT_ARRIVE_AU, type SpacecraftField,
+} from './scene/spacecraft'
 import type { FamousAsteroid } from './data/asteroids'
 import { PC_TO_AU } from './data/units'
+import { dateToJd } from './sim/kepler'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
@@ -56,6 +61,17 @@ let openNgcById = new Map<string, OpenNgcObject>()
 // focusOpenNgcImagery below. Position-follows-camera is handled per-frame in frame() since these
 // aren't part of a managed sprite group like the curated galaxy/deep-sky ones.
 const openNgcSpriteFollowers: { sprite: THREE.Sprite; truePos: THREE.Vector3 }[] = []
+
+// Spacecraft — Voyager 1/2, New Horizons, JWST (see src/scene/spacecraft.ts). Unlike the asteroid
+// belt (17 MB, deliberately deferred past first paint) public/spacecraft.json is ~115 KB — small
+// enough to load eagerly alongside OpenNGC rather than behind requestIdleCallback. Silent degrade
+// on failure, same as the other lazy catalogs: no banner, just no spacecraft.
+const spacecraftPromise = loadSpacecraftField(engine.scene).catch((err) => {
+  console.warn('Spacecraft layer failed to load:', err)
+  return null as SpacecraftField | null
+})
+let spacecraft: SpacecraftField | null = null
+spacecraftPromise.then((f) => { spacecraft = f })
 
 // Asteroid belt — ~486k MPCORB orbits propagated live (see src/scene/asteroidField.ts). This is
 // the only layer deliberately gated on a rendered frame having already happened: asteroids.bin is
@@ -140,6 +156,15 @@ loadStarField(engine.scene)
       if (!field) return
       searchEntries.push(...famousAsteroidEntries(field).map(({ def }) => ({
         name: def.name, kind: 'asteroid' as const, key: def.id, mag: -26, label: 'asteroid',
+      })))
+    })
+
+    // Spacecraft append in the same way once loaded. Same rank tier (-26) as the other curated
+    // non-star landmarks — a probe's "brightness" isn't a real quantity either.
+    spacecraftPromise.then((field) => {
+      if (!field) return
+      searchEntries.push(...field.defs.map((def) => ({
+        name: def.name, kind: 'spacecraft' as const, key: def.id, mag: -26, label: 'spacecraft',
       })))
     })
   })
@@ -343,6 +368,10 @@ window.addEventListener('keydown', (ev) => {
 
 function focusEntry(e: SearchEntry): void {
   if (mode === 'sky') exitSky() // a search fly-to exits sky view first
+  // Spacecraft trajectory polylines are visible only while a spacecraft is the current focus
+  // (see spacecraft.ts's doc comment) — cleared unconditionally here, then re-set below if the
+  // new focus IS a spacecraft, so navigating away from one always hides its line.
+  spacecraft?.setFocused(null)
   if (e.kind === 'planet') {
     const node = planets.find(p => p.def.id === e.key)!
     flyer.start(planetFocusable(node), node.def.radiusAu * 8)
@@ -359,6 +388,16 @@ function focusEntry(e: SearchEntry): void {
     if (hit && asteroids) {
       flyer.start(asteroidFocusable(asteroids, hit.index, hit.def.name, () => clock.now()), ASTEROID_ARRIVE_AU)
       showAsteroidCard(hit.def, asteroidOrbitSummary(asteroids, hit.index))
+    }
+  } else if (e.kind === 'spacecraft') {
+    // Same live-tracking Focusable pattern as asteroids: the fly-to and the post-arrival camera
+    // both re-solve the trajectory from clock.now() every frame.
+    const def = spacecraft?.byId.get(e.key as string)
+    if (def && spacecraft) {
+      flyer.start(spacecraftFocusable(def, () => clock.now()), SPACECRAFT_ARRIVE_AU)
+      spacecraft.setFocused(def.id)
+      const pos = spacecraftPositionAt(def, dateToJd(clock.now()))
+      showSpacecraftCard(def, pos.length(), pos.distanceTo(earth.truePos))
     }
   } else if (e.kind === 'dso') {
     // 'dso' covers both the 15 curated deep-sky objects and the ~12.4k OpenNGC ones (they share
@@ -437,6 +476,7 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
   if (hit) {
     const node = planets.find(p => p.mesh === hit.object)!
     if (node.def.name !== controls.focus.name) {
+      spacecraft?.setFocused(null)
       flyer.start(planetFocusable(node), node.def.radiusAu * 8)
       showPlanetCard(node.def)
     }
@@ -459,6 +499,7 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
     if (d2 < 14 * 14 && (!best || d2 < best.d2)) best = { name, idx, d2 }
   }
   if (best) {
+    spacecraft?.setFocused(null)
     flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
     showStarCard(stars.catalog, best.idx, best.name)
   }
@@ -544,6 +585,7 @@ function frame(realMs: number) {
   // galactic one, so it gets its own hard 100 AU distance gate inside the layer rather than a
   // crossfade tuned for kpc-scale ramps.
   asteroids?.update(simNow, camTruePos)
+  spacecraft?.update(simNow, camTruePos)
 
   hudName.textContent = controls.focus.name
   hudDist.textContent = formatDistance(controls.distance)

@@ -1,16 +1,17 @@
 export interface SearchEntry {
   name: string
-  kind: 'planet' | 'galaxy' | 'dso' | 'asteroid' | 'star'
-  key: string | number // planet id, galaxy id, deep-sky-object id, asteroid id, or star index
+  kind: 'planet' | 'galaxy' | 'dso' | 'asteroid' | 'spacecraft' | 'star'
+  key: string | number // planet id, galaxy id, deep-sky-object id, asteroid id, spacecraft id, or star index
   mag: number          // for tie-breaking: brighter first
   label?: string        // display override for renderResults (kind stays 'planet' for ranking)
 }
 
-// kind tiebreak order at equal match rank: planet > (galaxy, dso, asteroid) > star — dso shares
-// the galaxy rank tier since both are curated non-star landmarks with hips2fits imagery, and the
-// named asteroids sit in that same tier as the other curated non-star bodies.
+// kind tiebreak order at equal match rank: planet > (galaxy, dso, asteroid, spacecraft) > star —
+// dso shares the galaxy rank tier since both are curated non-star landmarks with hips2fits
+// imagery, and the named asteroids and spacecraft sit in that same tier as the other curated
+// non-star bodies.
 const KIND_ORDER: Record<SearchEntry['kind'], number> = {
-  planet: 0, galaxy: 1, dso: 1, asteroid: 1, star: 2,
+  planet: 0, galaxy: 1, dso: 1, asteroid: 1, spacecraft: 1, star: 2,
 }
 
 // Lowercased name per entry, computed once and reused across every keystroke. Since OpenNGC
