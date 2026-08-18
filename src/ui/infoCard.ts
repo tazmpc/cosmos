@@ -3,6 +3,7 @@ import type { StarCatalog } from '../data/catalogFormat'
 import type { GalaxyDef } from '../data/galaxies'
 import type { DeepSkyDef } from '../data/deepSky'
 import type { OpenNgcObject } from '../data/openNgc'
+import type { FamousAsteroid } from '../data/asteroids'
 import { apparentMagnitude } from '../data/starMath'
 import { PC_TO_LY, PC_TO_AU } from '../data/units'
 import { formatDistance } from './format'
@@ -40,6 +41,19 @@ export function showOpenNgcCard(obj: OpenNgcObject): void {
     : formatDistance(obj.distPc * PC_TO_AU)
   if (obj.messier != null) facts.Messier = `M${obj.messier}`
   render(obj.name, facts)
+}
+
+/** Named minor planets. `facts` is hand-written (src/data/asteroids.ts); the orbital numbers are
+ *  read live from the MPCORB elements in asteroids.bin so the card can't drift from what the
+ *  renderer is actually propagating. */
+export function showAsteroidCard(def: FamousAsteroid, orbit: { aAu: number; e: number; iDeg: number; periodYears: number }): void {
+  render(def.name, {
+    ...def.facts,
+    'Orbital period': `${orbit.periodYears.toFixed(2)} years`,
+    'Distance from Sun': `${orbit.aAu.toFixed(3)} AU (semi-major axis)`,
+    'Orbit shape': `eccentricity ${orbit.e.toFixed(3)}, inclination ${orbit.iDeg.toFixed(1)}°`,
+    Orbit: 'propagated from MPC orbital elements (two-body)',
+  })
 }
 
 export function showStarCard(catalog: StarCatalog, index: number, name: string): void {

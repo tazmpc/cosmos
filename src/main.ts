@@ -26,7 +26,12 @@ import { GALAXIES } from './data/galaxies'
 import { DEEP_SKY } from './data/deepSky'
 import { loadOpenNgc, openNgcFocusable, openNgcMinApproachAu, openNgcDiameterLy, type OpenNgcObject } from './data/openNgc'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, hideCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, showAsteroidCard, hideCard } from './ui/infoCard'
+import {
+  loadAsteroidField, asteroidFocusable, famousAsteroidEntries, asteroidOrbitSummary,
+  ASTEROID_ARRIVE_AU, type AsteroidField,
+} from './scene/asteroidField'
+import type { FamousAsteroid } from './data/asteroids'
 import { PC_TO_AU } from './data/units'
 
 const engine = createEngine(document.getElementById('app')!)
@@ -51,6 +56,38 @@ let openNgcById = new Map<string, OpenNgcObject>()
 // focusOpenNgcImagery below. Position-follows-camera is handled per-frame in frame() since these
 // aren't part of a managed sprite group like the curated galaxy/deep-sky ones.
 const openNgcSpriteFollowers: { sprite: THREE.Sprite; truePos: THREE.Vector3 }[] = []
+
+// Asteroid belt — ~206k MPCORB orbits propagated live (see src/scene/asteroidField.ts). This is
+// the only layer deliberately gated on a rendered frame having already happened: asteroids.bin is
+// 7 MB, and decoding it plus building its buffers is pure startup cost for a layer that matters
+// only once the user is looking at the inner solar system. Kicked from frame() on the first
+// frame, then deferred again to requestIdleCallback. Silent degrade on failure, like the other
+// lazy catalogs — no banner, just no belt.
+let asteroids: AsteroidField | null = null
+let asteroidLoadStarted = false
+let resolveAsteroids!: (f: AsteroidField | null) => void
+const asteroidPromise = new Promise<AsteroidField | null>((res) => { resolveAsteroids = res })
+/** id -> the famous-asteroid definition and its index in the binary; populated once loaded. */
+const asteroidByKey = new Map<string, { def: FamousAsteroid; index: number }>()
+
+function startAsteroidLoad(): void {
+  if (asteroidLoadStarted) return
+  asteroidLoadStarted = true
+  const kick = (): void => {
+    loadAsteroidField(engine.scene)
+      .then((f) => {
+        asteroids = f
+        for (const e of famousAsteroidEntries(f)) asteroidByKey.set(e.def.id, e)
+        resolveAsteroids(f)
+      })
+      .catch((err) => {
+        console.warn('Asteroid belt failed to load:', err)
+        resolveAsteroids(null)
+      })
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => kick())
+  else setTimeout(kick, 0)
+}
 
 showBanner('Loading star catalog…')
 loadStarField(engine.scene)
@@ -94,6 +131,16 @@ loadStarField(engine.scene)
         name: r.name, kind: 'dso' as const, key: r.id, mag: r.vmag ?? 12, label: 'deep sky',
       }))
       searchEntries.push(...dsoEntries)
+    })
+
+    // Named asteroids append in the same way once the belt loads. mag -26 puts them in the same
+    // rank tier as the curated galaxies and deep-sky objects — all of them are landmark objects
+    // whose "brightness" isn't comparable to a star's, so they tie and fall back to match rank.
+    asteroidPromise.then((field) => {
+      if (!field) return
+      searchEntries.push(...famousAsteroidEntries(field).map(({ def }) => ({
+        name: def.name, kind: 'asteroid' as const, key: def.id, mag: -26, label: 'asteroid',
+      })))
     })
   })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
@@ -305,6 +352,14 @@ function focusEntry(e: SearchEntry): void {
     flyer.start(galaxyFocusable(def), GALAXY_ARRIVE_AU)
     showGalaxyCard(def)
     objectImagery.focus(def.id)
+  } else if (e.kind === 'asteroid') {
+    // The Focusable re-solves the orbit from clock.now() every frame it's asked, so the fly-to
+    // chases a moving target and the camera keeps tracking it afterwards as time runs.
+    const hit = asteroidByKey.get(e.key as string)
+    if (hit && asteroids) {
+      flyer.start(asteroidFocusable(asteroids, hit.index, hit.def.name, () => clock.now()), ASTEROID_ARRIVE_AU)
+      showAsteroidCard(hit.def, asteroidOrbitSummary(asteroids, hit.index))
+    }
   } else if (e.kind === 'dso') {
     // 'dso' covers both the 15 curated deep-sky objects and the ~12.4k OpenNGC ones (they share
     // a kind so search ranks/labels them together — see main.ts's searchEntries construction and
@@ -425,7 +480,8 @@ function frame(realMs: number) {
   flyer.update(dt)
 
   clock.tick(realMs)
-  updatePositions(planets, clock.now())
+  const simNow = clock.now()
+  updatePositions(planets, simNow)
   if (mode === 'sky') camTruePos.copy(earth.truePos)
   else controls.getCameraTruePos(camTruePos)
   const la = layerAlphas(camTruePos.length())
@@ -484,11 +540,18 @@ function frame(realMs: number) {
   milkyWay?.update(camTruePos, la.milkyWay, engine.camera)
   milkyWayExt?.update(camTruePos, la.milkyWayExt, engine.camera)
   galaxies?.update(camTruePos, la.galaxies, engine.camera)
+  // Asteroids are exempt from layerAlphas: the belt is a solar-system-scale object, not a
+  // galactic one, so it gets its own hard 100 AU distance gate inside the layer rather than a
+  // crossfade tuned for kpc-scale ramps.
+  asteroids?.update(simNow, camTruePos)
 
   hudName.textContent = controls.focus.name
   hudDist.textContent = formatDistance(controls.distance)
 
   engine.composer.render()
+  // Kicked only once (the call is guarded): the belt's 7 MB fetch and buffer build wait until a
+  // frame has actually been presented, so they can never delay first paint.
+  startAsteroidLoad()
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

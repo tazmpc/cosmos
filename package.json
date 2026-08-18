@@ -12,7 +12,8 @@
     "openngc": "tsx scripts/build-openngc.ts",
     "milkyway": "tsx scripts/build-milkyway.ts",
     "constellations": "tsx scripts/build-constellations.ts",
-    "start": "npm run build && vite preview --port 5200 --strictPort"
+    "start": "npm run build && vite preview --port 5200 --strictPort",
+    "asteroids": "tsx scripts/build-asteroids.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",
