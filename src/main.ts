@@ -57,9 +57,9 @@ let openNgcById = new Map<string, OpenNgcObject>()
 // aren't part of a managed sprite group like the curated galaxy/deep-sky ones.
 const openNgcSpriteFollowers: { sprite: THREE.Sprite; truePos: THREE.Vector3 }[] = []
 
-// Asteroid belt — ~206k MPCORB orbits propagated live (see src/scene/asteroidField.ts). This is
+// Asteroid belt — ~486k MPCORB orbits propagated live (see src/scene/asteroidField.ts). This is
 // the only layer deliberately gated on a rendered frame having already happened: asteroids.bin is
-// 7 MB, and decoding it plus building its buffers is pure startup cost for a layer that matters
+// 17 MB, and decoding it plus building its buffers is pure startup cost for a layer that matters
 // only once the user is looking at the inner solar system. Kicked from frame() on the first
 // frame, then deferred again to requestIdleCallback. Silent degrade on failure, like the other
 // lazy catalogs — no banner, just no belt.

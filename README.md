@@ -71,6 +71,30 @@ third of the sky — it was never a full-sky survey. The dense wedge-shaped regi
 see in the galaxy layer *is the real survey footprint*, not a rendering artifact;
 2MRS (which is full-sky) fills in the nearer, all-sky layer around it.
 
+## The asteroid belt
+
+Closer in, ~486k real minor planets (MPCORB, absolute magnitude H &lt; 17) fill the gap
+between Mars and Jupiter. These are the only points in the app whose positions are
+**not** baked: each object's place is solved from its published Keplerian elements at
+the current simulated time, so the belt genuinely orbits. Speed the clock up and it
+*shears* — inner objects sweep round faster than outer ones, exactly as Kepler's third
+law requires.
+
+The structure is real, not decorative. The **Kirkwood gaps** — bands swept clear by
+orbital resonances with Jupiter — show up as dark rings in the annulus, and Jupiter's
+two **Trojan swarms** sit 60° ahead of and behind it along its orbit, with the leading
+cloud noticeably richer than the trailing one. None of that is placed by hand; it falls
+out of the catalog.
+
+Twelve of them (Ceres, Vesta, Pallas, Hygiea, Juno, Eunomia, Ida, Eros, Gaspra, Bennu,
+Ryugu, Apophis) are searchable and have info cards. Flying to one tracks it as it moves.
+
+**Honesty note on the orbits:** propagation is an unperturbed **two-body** solution from
+each object's osculating elements — it ignores the planets' gravitational tugs. Near the
+elements' epoch that is accurate to ~1,500 km for Ceres (checked against JPL Horizons);
+run the clock years away from it and the error grows. Good for *where the belt is*, not
+for astrometry.
+
 ## Rebuild the star catalog
 
     npm run catalog            # HYG only (~109k stars, fast, no download needed if cache present)
@@ -85,6 +109,15 @@ see in the galaxy layer *is the real survey footprint*, not a rendering artifact
 ## Rebuild the constellation lines
 
     npm run constellations   # d3-celestial line data -> public/constellations.json (~89 constellations, ~740 segments)
+
+## Rebuild the asteroid belt
+
+    npm run asteroids   # MPCORB -> public/asteroids.bin (~486k orbits)
+
+Needs `scripts/cache/MPCORB.DAT` from the Minor Planet Center:
+
+    curl -L -o scripts/cache/MPCORB.DAT.gz https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz
+    gunzip -k scripts/cache/MPCORB.DAT.gz
 
 ## Tests
 
@@ -102,6 +135,10 @@ see in the galaxy layer *is the real survey footprint*, not a rendering artifact
 - Real telescope imagery (DSS2 via hips2fits) only covers the curated set of ~15 deep-sky
   objects and a handful of landmark galaxies (Andromeda, M33, …) — the bulk star and galaxy
   catalogs (728k stars, 918k galaxies) remain points, not photographs.
+- The asteroid belt is cut at absolute magnitude H &lt; 17 (~486k of MPCORB's ~1.55M orbits) —
+  a cut for visual density, not a completeness limit, and MPCORB itself is far from complete
+  at that magnitude. The layer is hidden entirely beyond 100 AU from the Sun, and its orbits
+  are two-body (see the honesty note above).
 - Constellation lines are drawn as straight 3D chords between catalog line-segment endpoints,
   not great-circle-subdivided arcs — accurate enough at the rendered scale, but a very long
   segment would show as a visibly straight line rather than curving with the sphere.

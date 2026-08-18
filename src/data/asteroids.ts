@@ -8,7 +8,7 @@
  * number to the object's index in asteroids.bin. Positions come from propagating that object's
  * own MPCORB elements, so a card's fly-to target MOVES as sim time advances.
  *
- * Bennu, Ryugu and Apophis are small near-Earth objects that fail the binary's H < 16 and
+ * Bennu, Ryugu and Apophis are small near-Earth objects that fail the binary's H < 17 and
  * a > 1.5 AU cuts; the build script force-includes every entry in this list regardless.
  */
 export interface FamousAsteroid {

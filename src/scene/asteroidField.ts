@@ -5,19 +5,19 @@ import type { Focusable } from '../engine/cameraControls'
 import { FAMOUS_ASTEROIDS } from '../data/asteroids'
 
 /**
- * The asteroid belt: ~206k MPCORB orbits (public/asteroids.bin) propagated live.
+ * The asteroid belt: ~486k MPCORB orbits (public/asteroids.bin) propagated live.
  *
  * Unlike every other point layer in this project, these positions are NOT baked — each object's
  * place is solved from its Keplerian elements at the current sim time, so the belt actually
  * orbits, and shears (inner objects faster) when the clock is sped up.
  *
- * Solving 206k orbits every frame would cost ~15 ms, so the layer uses a ROLLING CURSOR: each
+ * Solving 486k orbits every frame would cost ~100 ms, so the layer uses a ROLLING CURSOR: each
  * frame it walks a fixed slice of the catalog (CHUNK_PER_FRAME) and re-solves only the objects
  * in that slice whose last solution is more than RESOLVE_THRESHOLD_DAYS stale. A full sweep of
- * the catalog therefore takes ceil(count / CHUNK_PER_FRAME) frames — about 9 at 206k — which is
- * ~150 ms of lag on the freshest-vs-stalest object. At real-time rates that lag is invisible
- * (the belt moves ~0.0000002 AU in 150 ms); at 1 month/second it is the reason the belt shears
- * smoothly instead of stepping.
+ * the catalog therefore takes ceil(count / CHUNK_PER_FRAME) frames — about 61 at 486k — which is
+ * ~1 s of lag on the freshest-vs-stalest object. At real-time rates that lag is invisible (the
+ * belt moves ~1e-6 AU in a second); at 1 month/second it is the reason the belt shears smoothly
+ * instead of stepping.
  *
  * The staleness test is what makes this cheap at normal speed: after the first sweep, every
  * object is fresh and the cursor's slice costs 25k float comparisons and zero Kepler solves
@@ -27,13 +27,14 @@ import { FAMOUS_ASTEROIDS } from '../data/asteroids'
 /** Objects visited by the rolling cursor per frame. Sized so the worst case — every object in the
  *  slice needing a re-solve, which is what sustained fast time compression produces — stays inside
  *  a 2 ms budget. Measured on this machine at ~0.21 us per solve (10k solves came out at a 2.1 ms
- *  median, marginally over), so the slice is 8k — ~1.7 ms — and a full sweep of ~206k objects
- *  takes 26 frames.
+ *  median, marginally over), so the slice is 8k — ~1.7 ms — and a full sweep of ~486k objects
+ *  takes 61 frames.
  *
- *  That sweep length is a per-object position lag of up to 26 frames, i.e. ~13 sim-days at
+ *  That sweep length is a per-object position lag of up to 61 frames, i.e. ~30 sim-days at
  *  1 month/second. It is invisible rather than merely tolerable: the lag shifts each object along
  *  its own orbit, which is the direction the belt is already uniformly populated in, so it reads
- *  as nothing at all rather than as a moving seam. */
+ *  as nothing at all rather than as a moving seam — the belt has no azimuthal features for the
+ *  lag to smear, only the radial Kirkwood structure, which along-orbit lag cannot touch. */
 const CHUNK_PER_FRAME = 8_000
 
 /** Re-solve an object once sim time has moved this far from its last solution. Half a day moves
@@ -94,7 +95,14 @@ const FRAG = /* glsl */ `
  *  asteroid (H, G) system, not a stellar luminosity, so the star shader's apparent-magnitude
  *  brightness model does not apply and this layer uses its own flat-colour material. */
 const ASTEROID_COLOR = new THREE.Color(0.74, 0.68, 0.57)
-const ASTEROID_ALPHA = 0.55
+
+/** Per-point alpha, additively blended. 0.23, not the 0.55 that suited the earlier H < 16 build:
+ *  raising the cut to H < 17 multiplied the point count by 2.36 (206k -> 486k), and at 0.55 the
+ *  belt additively saturated to a flat white disc — the Kirkwood gaps and the Trojan clouds
+ *  disappeared into the blowout, which is exactly the structure the layer exists to show.
+ *  Dividing the alpha by the same 2.36 conserves the total additive energy, so the belt's overall
+ *  brightness matches the previous build while the extra objects buy density instead of glare. */
+const ASTEROID_ALPHA = 0.23
 
 /** Screen-space size in px from absolute magnitude: brighter (smaller H) = bigger, clamped to
  *  1-3 px. H 5 -> 3 px (the handful of giants), H 10 -> 2 px, H >= 15 -> 1 px (the bulk). */

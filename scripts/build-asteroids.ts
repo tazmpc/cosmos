@@ -37,10 +37,14 @@ import { CAST_MAGIC, CAST_VERSION, CAST_HEADER_BYTES, CAST_FIELDS } from '../src
 import { FAMOUS_ASTEROIDS } from '../src/data/asteroids'
 
 // ---- filters ----------------------------------------------------------------------------------
-// H < 16 is the brightness cut: absolute magnitude in the asteroid (H, G) system, so it is a
-// proxy for size (H 16 is roughly a 2 km body at belt albedos). a and e bound the orbit to
+// H < 17 is the brightness cut: absolute magnitude in the asteroid (H, G) system, so it is a
+// proxy for size (H 17 is roughly a 1 km body at belt albedos). a and e bound the orbit to
 // something this two-body propagator can render sensibly.
-const MAX_H = 16
+//
+// The cut is set for VISUAL DENSITY of the belt rather than for any physical completeness limit
+// — MPCORB is nowhere near complete at H 17. H < 16 yields only ~206k objects; H < 17 yields
+// ~486k, which is the density the phase-9 plan was describing, at ~17.5 MB lazily fetched.
+const MAX_H = 17
 const MIN_A_AU = 1.5
 const MAX_A_AU = 50
 const MAX_E = 0.95
@@ -83,7 +87,7 @@ const EPOCH_RE = /^[IJKL]\d\d[1-9A-V][1-9A-V]$/
 // Three of the famous 12 (Bennu H 20.68 a 1.13, Ryugu H 19.54 a 1.19, Apophis H 19.00 a 0.92)
 // are small near-Earth objects that fail BOTH the H cut and the a cut. The cuts exist to bound
 // the bulk belt render, not to decide which objects are worth naming, so every famous asteroid is
-// force-included regardless — 12 extra rows out of ~200k, and without them "search Bennu" would
+// force-included regardless — 12 extra rows out of ~486k, and without them "search Bennu" would
 // have nothing to fly to.
 const FAMOUS_NUMBERS = new Set(FAMOUS_ASTEROIDS.map((f) => f.mpcNumber))
 
@@ -206,12 +210,11 @@ if (stats.total < 1_000_000) {
   throw new Error(`only ${stats.total} MPCORB data rows recognised — fixed-width format changed?`)
 }
 
-// Count gate. NOTE: the phase-9 plan predicted ~350-450k objects for H < 16; the current MPCORB
-// actually yields ~206k (the H histogram crosses 400k only around H < 17). The FILTER is the
-// specified, physically meaningful thing — "brighter than absolute magnitude 16" — so it is kept
-// as written and the gate bounds the real number instead of the estimate.
-if (rows.length < 180_000 || rows.length > 260_000) {
-  throw new Error(`kept ${rows.length} objects — expected 180k-260k for H < ${MAX_H}`)
+// Count gate. Measured H histogram on the 2026-08-11 MPCORB (after the orbit cuts): H<15 82k,
+// H<16 206k, H<17 486k, H<18 938k. The band is wide enough to absorb MPCORB's daily growth
+// without becoming so wide it would miss a parser regression.
+if (rows.length < 430_000 || rows.length > 540_000) {
+  throw new Error(`kept ${rows.length} objects — expected 430k-540k for H < ${MAX_H}`)
 }
 
 for (const r of rows) {
