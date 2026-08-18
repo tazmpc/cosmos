@@ -90,11 +90,15 @@ const CERES_REF_ECLIPTIC = {
 }
 
 describe('elementsToHeliocentricEqj', () => {
-  it('places Ceres within 0.05 AU of the JPL Horizons reference vector', () => {
+  it('places Ceres within 2e-5 AU of the JPL Horizons reference vector', () => {
     const got = elementsToHeliocentricEqj(CERES, CERES_JD)
     const ref = eclipticToEqj(CERES_REF_ECLIPTIC.x, CERES_REF_ECLIPTIC.y, CERES_REF_ECLIPTIC.z)
     const err = Math.hypot(got.x - ref.x, got.y - ref.y, got.z - ref.z)
-    expect(err).toBeLessThan(0.05)
+    // Measured 9.86e-6 AU (1,475 km) — the residual is the two-body model neglecting planetary
+    // perturbations over the 59 days between the MPCORB epoch and this date, not solver error.
+    // The bound is set just above that rather than at a loose round number, so a regression in
+    // the rotation chain or the anomaly solve fails here instead of hiding under slack.
+    expect(err).toBeLessThan(2e-5)
   })
 
   it('keeps |r| = a at every mean anomaly for a circular orbit', () => {

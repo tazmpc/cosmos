@@ -13,9 +13,14 @@
  *   24  f32[count] x 9, in CAST_FIELD_ORDER — one contiguous array per field (SoA)
  *
  * Per-object epochs vary, but the MPC re-epochs its whole database to one standard epoch every
- * few months, so ~99% of objects share a single value. Storing that once as an f64 and giving
- * each object an f32 offset in DAYS costs 4 bytes/object instead of 8 and keeps sub-minute
- * precision across the whole spread of epochs present.
+ * few months, so ~99.8% of objects share a single value. Storing that once as an f64 and giving
+ * each object an f32 offset in DAYS costs 4 bytes/object instead of 8.
+ *
+ * Precision: the widest offset present is 30,589 days (892 objects carry epochs back to ~1942),
+ * where the f32 ulp is 2^-9 d ~= 169 s. So the worst stored epoch error is under 3 minutes, which
+ * for a main-belt mean motion of ~0.2 deg/day is a mean-anomaly error of ~4e-4 degrees — orders
+ * of magnitude below the two-body model's own error, and exactly 0 for the 99.8% of objects
+ * sitting at offset 0.
  */
 
 export const CAST_MAGIC = 0x54534143 // "CAST" little-endian

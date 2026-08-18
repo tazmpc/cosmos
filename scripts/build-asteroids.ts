@@ -129,8 +129,19 @@ async function parse(): Promise<{ rows: Row[]; stats: Record<string, number>; ep
     const forced = mpcNumber !== null && FAMOUS_NUMBERS.has(mpcNumber)
 
     const hStr = line.slice(8, 13).trim()
-    if (hStr === '') { stats.noH++; if (!forced) continue }
-    const H = hStr === '' ? MAX_H : Number(hStr)
+    if (hStr === '') {
+      stats.noH++
+      // A bulk row with no H simply can't pass a brightness cut — drop it. A FAMOUS row with no H
+      // is a different thing entirely: it would be force-included with a fabricated magnitude,
+      // which would then drive its rendered point size and its info card. Fail loudly instead —
+      // this has never fired (all 12 have measured H), and if MPCORB ever drops one it should be
+      // a build failure, not a silently invented number.
+      if (forced) {
+        throw new Error(`famous asteroid ${readable.trim()} has a blank H in MPCORB — refusing to fabricate one`)
+      }
+      continue
+    }
+    const H = Number(hStr)
 
     const a = Number(line.slice(92, 103))
     const e = Number(line.slice(70, 79))

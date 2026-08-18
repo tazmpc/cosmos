@@ -20,7 +20,7 @@ import { FAMOUS_ASTEROIDS } from '../data/asteroids'
  * instead of stepping.
  *
  * The staleness test is what makes this cheap at normal speed: after the first sweep, every
- * object is fresh and the cursor's slice costs 25k float comparisons and zero Kepler solves
+ * object is fresh and the cursor's slice costs 8k float comparisons and zero Kepler solves
  * until sim time has moved half a day.
  */
 
@@ -174,7 +174,15 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
 
   // Per-object staleness, stored as an offset from the catalog's base epoch rather than as a raw
   // Julian Date: a JD is ~2.46e6, and an f32 only resolves that to ~0.25 day — coarser than the
-  // 0.5-day threshold being tested. Offsets are small, so the same f32 keeps sub-second precision.
+  // 0.5-day threshold being tested. Offsets start near zero, so the same f32 keeps sub-second
+  // precision over any realistic session.
+  //
+  // Edge case, accepted: the f32 ulp reaches the 0.5-day threshold itself once |simOffset| passes
+  // 2^22 ~= 4.2e6 days (~11,500 sim-years from the catalog epoch). Beyond that, `simOffset` and a
+  // stored `lastSolvedOffset` can quantize to the same float, the staleness test never fires, and
+  // those objects would freeze in place. Reaching it requires running the clock at 1 yr/s for
+  // over three hours, and the two-body orbits are meaningless millennia from their epoch long
+  // before then, so it is not worth a second array of doubles to fix.
   const lastSolvedOffset = new Float32Array(count).fill(NEVER_SOLVED)
 
   // Reused scratch — see elementsToHeliocentricEqjInto's doc comment. One elements object and one
@@ -198,6 +206,10 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
 
   let cursor = 0
 
+  // The named asteroids, as a flat array for the per-frame re-solve below. Built once — the map
+  // never changes after load.
+  const famousIndices = [...indexByMpcNumber.values()]
+
   return {
     points, catalog, indexByMpcNumber,
 
@@ -212,7 +224,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
       points.visible = visible
       // Hidden means no propagation at all — the layer's whole cost drops to this length check
       // while the camera is out among the stars. Positions go stale, but the cursor re-solves
-      // every object within one full sweep (~9 frames) of becoming visible again.
+      // every object within one full sweep (~61 frames) of becoming visible again.
       if (!visible) return
 
       const jd = dateToJd(simDate)
@@ -236,7 +248,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
 
       if (solved > 0) {
         // Upload only the slice the cursor walked (element units, not vertices), splitting into
-        // two ranges when the slice wraps past the end of the buffer. Uploading the whole 2.5 MB
+        // two ranges when the slice wraps past the end of the buffer. Uploading the whole 5.56 MB
         // position buffer every frame instead is measurably worse for no benefit.
         const end = start + n
         if (end <= count) {
@@ -245,8 +257,28 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
           posAttr.addUpdateRange(start * 3, (count - start) * 3)
           posAttr.addUpdateRange(0, (end - count) * 3)
         }
-        posAttr.needsUpdate = true
       }
+
+      // The named asteroids are exempt from the cadence and re-solved EVERY frame.
+      //
+      // They are the only objects the camera can lock onto, and asteroidFocusable solves their
+      // position live per frame — so the camera sits exactly on the true position while the
+      // rendered dot would sit wherever the cursor last left it, up to a full sweep (61 frames)
+      // behind. At real time that is nothing, but at accelerated rates the dot visibly drifts off
+      // frame centre: measured centre-pixel occupancy falls to 2% at just 1 day/s, and the dot
+      // ends up 3.67 AU from the camera's focus at 1 yr/s. Twelve extra solves per frame — far
+      // below measurement noise against the 8,000 the cursor already does — removes it entirely.
+      for (const i of famousIndices) {
+        elementsToHeliocentricEqjInto(loadElements(i), jd, scratchOut)
+        positions[i * 3] = scratchOut.x
+        positions[i * 3 + 1] = scratchOut.y
+        positions[i * 3 + 2] = scratchOut.z
+        lastSolvedOffset[i] = simOffset
+        posAttr.addUpdateRange(i * 3, 3)
+      }
+      // Unconditional: the famous re-solve above always queues ranges, so there is always at
+      // least one pending upload.
+      posAttr.needsUpdate = true
 
       cursor = (start + n) % count
 
@@ -254,6 +286,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
         const w = window as unknown as { __cosmosAsteroids?: Record<string, number> }
         w.__cosmosAsteroids = {
           count, chunk: n, solvedThisFrame: solved,
+          famousResolved: famousIndices.length,
           solveMs: Number((performance.now() - t0).toFixed(3)),
           sweepFrames: Math.ceil(count / CHUNK_PER_FRAME),
         }

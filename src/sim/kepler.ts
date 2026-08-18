@@ -120,7 +120,7 @@ export function elementsToHeliocentricEqj(el: OrbitalElements, jd: number): Xyz 
 /**
  * Allocation-free variant of elementsToHeliocentricEqj: writes into `out` and returns it.
  *
- * The asteroid layer solves ~25k orbits per frame (src/scene/asteroidField.ts); at that rate the
+ * The asteroid layer solves ~8k orbits per frame (src/scene/asteroidField.ts); at that rate the
  * result object and the elements object both have to be reused scratch, or the layer allocates
  * ~50k short-lived objects every frame purely to hand numbers around.
  */
