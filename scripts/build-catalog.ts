@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { encodeCatalog } from '../src/data/catalogFormat'
 import { raDecDistToXyz } from '../src/data/starMath'
+import { ballesterosInverseCi } from '../src/data/starColor'
 
 // HYG v4.1 columns (header row names): id,hip,hd,hr,gl,bf,proper,ra,dec,dist,...,mag,absmag,spect,ci,...
 const csv = readFileSync('scripts/cache/hygdata.csv', 'utf8').split('\n')
@@ -52,11 +53,56 @@ if (process.argv.includes('--gaia')) {
     namedCells.add(cellOf((raDeg + 360) % 360, decDeg))
   }
 
+  // ---- measured effective temperatures (Gaia DR3 teff_gspphot) ----
+  //
+  // Colors come from a measured temperature wherever Gaia has one, instead of from the BP-RP
+  // photometric index. teff_gspphot is not in scripts/cache/gaia.csv (that extract predates it)
+  // and the file carries no source_id to join on, so the temperatures live in a second extract,
+  // scripts/cache/gaia_teff.csv, taken with the IDENTICAL WHERE clause and joined on position.
+  // Joining rather than re-downloading the whole selection is deliberate: it cannot perturb which
+  // stars are in the catalog or where they sit, so stars.bin's positions stay byte-identical and
+  // only the colorIndex block changes. Full-precision ra/dec makes a safe key — the two extracts
+  // are the same rows of the same static table, so the coordinates are bit-for-bit the same
+  // doubles; 9 decimal places is 3.6 microarcsec, far finer than any pair of distinct sources.
+  //
+  //   curl -fG 'https://gea.esac.esa.int/tap-server/tap/sync' \
+  //     --data-urlencode 'REQUEST=doQuery' --data-urlencode 'LANG=ADQL' \
+  //     --data-urlencode 'FORMAT=csv' \
+  //     --data-urlencode "QUERY=SELECT ra, dec, teff_gspphot FROM gaiadr3.gaia_source \
+  //   WHERE phot_g_mean_mag < 10.5 AND parallax > 0.5 AND parallax_over_error > 5" \
+  //     -o scripts/cache/gaia_teff.csv
+  //
+  // (the full-sky form trips the server's statement timeout; fetch it in 30-degree RA slices with
+  // `AND ra >= L AND ra < L+30` appended, strictly one at a time, and concatenate)
+  const posKey = (raDeg: number, decDeg: number) => `${raDeg.toFixed(9)},${decDeg.toFixed(9)}`
+  const teffByPos = new Map<string, number>()
+  {
+    let teffCsv: string
+    try {
+      teffCsv = readFileSync('scripts/cache/gaia_teff.csv', 'utf8')
+    } catch {
+      throw new Error('scripts/cache/gaia_teff.csv missing — see the TAP query in this file')
+    }
+    const rows = teffCsv.split('\n')
+    const th = rows[0].split(',')
+    const [tRa, tDec, tTeff] = [th.indexOf('ra'), th.indexOf('dec'), th.indexOf('teff_gspphot')]
+    if (tRa === -1 || tDec === -1 || tTeff === -1) throw new Error('gaia_teff.csv is missing a column')
+    for (let i = 1; i < rows.length; i++) {
+      const f = rows[i].split(',')
+      if (f.length < th.length) continue
+      const t = parseFloat(f[tTeff])
+      // GSP-Phot only fits within this range; anything outside it is a fit that ran to a rail
+      if (!(t >= 2500 && t <= 50000)) continue
+      teffByPos.set(posKey(parseFloat(f[tRa]), parseFloat(f[tDec])), t)
+    }
+    console.log(`loaded ${teffByPos.size} usable Gaia effective temperatures`)
+  }
+
   const gaia = readFileSync('scripts/cache/gaia.csv', 'utf8').split('\n')
   const gh = gaia[0].split(',')
   const gi = (nm: string) => gh.indexOf(nm)
   const [gRa, gDec, gPar, gMag, gBpRp] = [gi('ra'), gi('dec'), gi('parallax'), gi('phot_g_mean_mag'), gi('bp_rp')]
-  let dropped = 0
+  let dropped = 0, measured = 0, fallback = 0
   for (let i = 1; i < gaia.length; i++) {
     const f = gaia[i].split(',')
     if (f.length < gh.length) continue
@@ -68,9 +114,19 @@ if (process.argv.includes('--gaia')) {
     const [x, y, z] = raDecDistToXyz(raDeg / 15, decDeg, distPc)
     keepPos.push(x, y, z)
     keepAbs.push(parseFloat(f[gMag]) + 5 * (Math.log10(par) - 2)) // M = m + 5(log10 p_mas − 2)
-    const bpRp = parseFloat(f[gBpRp])
-    keepCi.push(Number.isNaN(bpRp) ? 0.7 : bpRp)
+    // measured temperature -> color index where Gaia fitted one, BP−RP otherwise
+    const teff = teffByPos.get(posKey(raDeg, decDeg))
+    if (teff !== undefined) {
+      keepCi.push(ballesterosInverseCi(teff))
+      measured++
+    } else {
+      const bpRp = parseFloat(f[gBpRp])
+      keepCi.push(Number.isNaN(bpRp) ? 0.7 : bpRp)
+      fallback++
+    }
   }
+  console.log(`colors: ${measured} from measured teff, ${fallback} from BP−RP ` +
+    `(${((100 * measured) / (measured + fallback)).toFixed(1)}% measured)`)
 
   const cat = {
     count: keepPos.length / 3,

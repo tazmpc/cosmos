@@ -16,7 +16,8 @@
     "asteroids": "tsx scripts/build-asteroids.ts",
     "spacecraft": "tsx scripts/build-spacecraft.ts",
     "exoplanets": "tsx scripts/build-exoplanets.ts",
-    "moonphase": "tsx scripts/build-moon-phase.ts"
+    "moonphase": "tsx scripts/build-moon-phase.ts",
+    "dustmap": "tsx scripts/build-dustmap.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

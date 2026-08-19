@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { encodeCatalog } from '../src/data/catalogFormat'
+import { decodeDustGrid, cumulativeE, type DustGrid } from '../src/data/dustMap'
 
 // ---- seeded deterministic PRNG (mulberry32) — standard implementation, rebuilds are byte-identical ----
 function mulberry32(seed: number) {
@@ -82,6 +83,120 @@ const DUST_LANE_TWIST = -0.22 // rad of phase offset: lanes lead the stellar arm
  *  so a typical in-plane sight line reaching 8+ kpc lands at tau ~ 2 — see the calibration
  *  histogram printed at the end of the build. */
 const K_TAU = 1.3
+
+// ---- measured near-field dust (Edenhofer et al. 2023) ---------------------------------------
+//
+// Within 1.25 kpc of the Sun the dust column no longer comes from the analytic disk above: it
+// comes from the measured 3D map (scripts/build-dustmap.ts; see src/data/dustMap.ts for the
+// format). That is the part of the sky the camera actually looks at from Earth, and it is where
+// the analytic exp(-R/3.5)exp(-|z|/0.1) model is least like reality — the real near field is
+// lumpy (Orion, Taurus, rho Oph, the Aquila Rift) rather than a smooth exponential, and those
+// lumps ARE the visible structure in the band.
+//
+// The measured map and the analytic model are in different units (extinction E of Zhang, Green &
+// Rix 2023 vs. an arbitrary model density), so one scale factor converts between them. It is
+// fixed by requiring the two to agree on the MEDIAN in-plane column at 1 kpc, measured over a
+// fixed all-sky grid of in-plane directions — a deterministic number that does not depend on the
+// Gaia sample, so rebuilds stay byte-identical.
+const DUST_MAP_PATH = 'scripts/cache/edenhofer-cum.bin'
+const DUST_MAP_MAX_KPC = 1.25  // the map's outer validity radius
+const DUST_MAP_BLEND_LO = 1.0  // measured below this, linearly handed over to analytic above
+const CALIB_S_KPC = 1.0        // distance at which the two are matched
+
+let dustGrid: DustGrid | null = null
+let dustScale = 1 // measured E -> analytic column units; set by calibrateDustScale()
+
+function loadDustMap(): DustGrid {
+  let buf: Buffer
+  try {
+    buf = readFileSync(DUST_MAP_PATH)
+  } catch {
+    throw new Error(`measured dust map missing at ${DUST_MAP_PATH} — run \`npm run dustmap\` first`)
+  }
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+  return decodeDustGrid(ab)
+}
+
+/** Great-circle separation between two galactic directions, in degrees. */
+function angularSepDeg(l1: number, b1: number, l2: number, b2: number): number {
+  const c = Math.sin(b1) * Math.sin(b2) + Math.cos(b1) * Math.cos(b2) * Math.cos(l1 - l2)
+  return Math.acos(Math.max(-1, Math.min(1, c))) / DEG
+}
+
+/** Analytic dust column (integral of D ds, kpc) from the Sun along galactic (l, b) out to sKpc. */
+function analyticColumn(l: number, b: number, sKpc: number): number {
+  const cb = Math.cos(b)
+  const g0 = cb * Math.cos(l), g1 = cb * Math.sin(l), g2 = Math.sin(b)
+  const steps = 200
+  const ds = sKpc / steps
+  let acc = 0
+  for (let i = 0; i < steps; i++) {
+    const s = (i + 0.5) * ds
+    const x = SUN_GC_X + s * g0, y = s * g1, z = s * g2
+    acc += dustDensity(Math.hypot(x, y), Math.abs(z), Math.atan2(y, x)) * ds
+  }
+  return acc
+}
+
+/** One scale factor, from the median in-plane column at CALIB_S_KPC. Deterministic: the direction
+ *  grid is fixed (every whole degree of galactic longitude at b = 0), not drawn from any input. */
+function calibrateDustScale(grid: DustGrid): number {
+  const measured: number[] = [], analytic: number[] = []
+  for (let lDeg = 0; lDeg < 360; lDeg++) {
+    const l = lDeg * DEG
+    measured.push(cumulativeE(grid, l, 0, CALIB_S_KPC * 1000))
+    analytic.push(analyticColumn(l, 0, CALIB_S_KPC))
+  }
+  const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1] }
+  const mMed = median(measured), aMed = median(analytic)
+  if (!(mMed > 0)) throw new Error('measured dust map has no in-plane signal — is it read correctly?')
+  console.log(
+    `dust calibration at ${CALIB_S_KPC} kpc in-plane: median measured E ${mMed.toFixed(4)}, ` +
+    `median analytic column ${aMed.toFixed(4)} -> scale ${(aMed / mMed).toFixed(4)}`)
+  return aMed / mMed
+}
+
+/** Assert the HEALPix sphere is being read in the right orientation, by checking that two real
+ *  molecular clouds land where the sky says they are.
+ *
+ *  Both probes sit well OFF the galactic plane, which is what makes them sharp: at |b| ~ 17-19 deg
+ *  and 1 kpc a sight line is 300+ pc above the disk, so a smooth axisymmetric dust model — or a
+ *  transposed, flipped, or mis-rotated read of the map — has no way to produce a strong peak at
+ *  one particular longitude there. Only the real map does. */
+function assertDustMapOrientation(grid: DustGrid): void {
+  const probes: [string, number, number][] = [
+    ['Orion A', 209.0, -19.4],
+    ['rho Ophiuchi', 353.7, 16.9],
+  ]
+  for (const [name, lDeg, bDeg] of probes) {
+    const b = bDeg * DEG
+    const here = cumulativeE(grid, lDeg * DEG, b, 1000)
+    const ring: number[] = []
+    for (let i = 0; i < 360; i++) ring.push(cumulativeE(grid, i * DEG, b, 1000))
+    ring.sort((x, y) => x - y)
+    const median = ring[180]
+    const ratio = here / median
+    console.log(`dust orientation probe ${name} (l=${lDeg}, b=${bDeg}): E ${here.toFixed(3)} vs ` +
+      `median ${median.toFixed(3)} at the same latitude -> ${ratio.toFixed(1)}x`)
+    if (!(ratio >= 3)) {
+      throw new Error(`${name} is only ${ratio.toFixed(1)}x its latitude median (expected >= 3x) — ` +
+        `the dust map is not being read in the right orientation`)
+    }
+  }
+}
+
+/** Measured column in analytic units, out to sKpc along galactic (l, b). */
+function measuredColumn(l: number, b: number, sKpc: number): number {
+  return dustScale * cumulativeE(dustGrid!, l, b, sKpc * 1000)
+}
+
+/** Fraction of the analytic model to use at distance s: 0 inside the map, ramping to 1 at its
+ *  outer edge. Applied to the per-bin INCREMENT (not the total) so the column stays continuous. */
+function analyticFraction(sKpc: number): number {
+  if (sKpc <= DUST_MAP_BLEND_LO) return 0
+  if (sKpc >= DUST_MAP_MAX_KPC) return 1
+  return (sKpc - DUST_MAP_BLEND_LO) / (DUST_MAP_MAX_KPC - DUST_MAP_BLEND_LO)
+}
 
 /** Emissivity attenuation: exp(-K_EMIT * coverage) multiplies the DISK term (not the bulge).
  *
@@ -166,6 +281,9 @@ const N_BINS = 300
 const S_MAX_KPC = 30
 const BIN_WIDTH = S_MAX_KPC / N_BINS // 0.1 kpc
 
+/** The bin whose OUTER edge sits at 1 kpc — where the rift-orientation gate samples tau. */
+const TAU_1KPC_BIN = Math.round(1 / BIN_WIDTH) - 1
+
 /** Sight-line bins are sampled with weight rho(P(s)) * s^2 — the s^2 is the spherical volume
  *  Jacobian, and leaving it out (as earlier revisions of this script did) is what produced the
  *  star-like hotspot at the Sun's galactocentric position that dominated every view of the galaxy
@@ -221,6 +339,10 @@ const NEAR_SUPPRESS_KPC = 2.0
 
 // ---- interior build: one point per Gaia sky-density row ------------------------------------
 function buildInterior(): void {
+dustGrid = loadDustMap()
+assertDustMapOrientation(dustGrid)
+dustScale = calibrateDustScale(dustGrid)
+
 // ---- parse Gaia sky-density sample (ra, dec in degrees) ----
 const raw = readFileSync('scripts/cache/gaia_density.csv', 'utf8')
 const lines = raw.split('\n')
@@ -235,6 +357,11 @@ const gcSampleY: number[] = []
 const gcSampleZ: number[] = []
 // tau calibration sample: optical depth of in-plane sight lines that reached 8+ kpc
 const tauInPlane: number[] = []
+// rift-orientation gate: tau at 1 kpc toward (l=30, b=0) — through the Aquila Rift — against the
+// same longitude 20 deg off the plane. Real dust makes the first far darker; a transposed or
+// flipped read of the HEALPix map would not.
+const tauRiftOn: number[] = []
+const tauRiftOff: number[] = []
 
 const weights = new Float64Array(N_BINS) // reused per point — avoids per-bin allocation
 const dustCum = new Float64Array(N_BINS) // cumulative integral of dust density out to each bin
@@ -286,10 +413,19 @@ for (let li = start; li < lines.length; li++) {
   const g1 = R[1][0] * u0 + R[1][1] * u1 + R[1][2] * u2
   const g2 = R[2][0] * u0 + R[2][1] * u1 + R[2][2] * u2
 
+  // galactic (l, b) of this sight line — the measured dust map is indexed in galactic coordinates
+  const gLat = Math.asin(Math.max(-1, Math.min(1, g2)))
+  const gLon = Math.atan2(g1, g0)
+
   // discretize s in (0, 30] kpc into 300 bins, weight each bin center by density, and integrate
-  // the dust density along the SAME march (cumulative -> optical depth to any sampled bin)
+  // the dust density along the SAME march (cumulative -> optical depth to any sampled bin).
+  // The dust INCREMENT per bin is measured (Edenhofer) inside 1 kpc, analytic past 1.25 kpc, and
+  // a linear handover between — blending increments rather than totals keeps the column
+  // continuous across the seam no matter how far apart the two models are there.
   let wsum = 0
   let dAcc = 0
+  let prevMeasured = 0
+  let tau1Kpc = 0
   for (let i = 0; i < N_BINS; i++) {
     const s = (i + 0.5) * BIN_WIDTH
     rhoAndDust(SUN_GC_X + s * g0, s * g1, s * g2)
@@ -297,8 +433,19 @@ for (let li = start; li < lines.length; li++) {
       (1 - Math.exp(-((s / NEAR_SUPPRESS_KPC) ** 2)))
     weights[i] = w
     wsum += w
-    dAcc += outDust * BIN_WIDTH
+
+    const analyticStep = outDust * BIN_WIDTH
+    const f = analyticFraction(s)
+    if (f >= 1) {
+      dAcc += analyticStep
+    } else {
+      const sUpper = (i + 1) * BIN_WIDTH
+      const meas = measuredColumn(gLon, gLat, sUpper)
+      dAcc += f * analyticStep + (1 - f) * (meas - prevMeasured)
+      prevMeasured = meas
+    }
     dustCum[i] = dAcc
+    if (i === TAU_1KPC_BIN) tau1Kpc = K_TAU * dAcc
   }
 
   // inverse-transform sample a bin, then jitter uniformly within it
@@ -341,6 +488,10 @@ for (let li = start; li < lines.length; li++) {
   }
   if (parsed % 20 === 0 && (zGal < 0.15 && zGal > -0.15) && sKpc >= 8) tauInPlane.push(tau)
 
+  // rift gate samples — angular distance from the two probe directions at the same longitude
+  if (angularSepDeg(gLon, gLat, 30 * DEG, 0) <= 3) tauRiftOn.push(tau1Kpc)
+  else if (angularSepDeg(gLon, gLat, 30 * DEG, 20 * DEG) <= 3) tauRiftOff.push(tau1Kpc)
+
   parsed++
 }
 
@@ -376,6 +527,27 @@ if (tauInPlane.length > 0) {
   console.log(
     `in-plane (|z|<0.15 kpc, s>=8 kpc) optical depth, n=${sorted.length}: ` +
     `mean ${mean.toFixed(2)}, p10 ${q(0.1).toFixed(2)}, median ${q(0.5).toFixed(2)}, p90 ${q(0.9).toFixed(2)}`)
+}
+
+// ---- rift-orientation gate ----
+// Asserts the measured map is being read in the right orientation. (l=30, b=0) looks down the
+// Aquila Rift; (l=30, b=+20) looks out of the plane at the same longitude. Real dust makes the
+// first several times darker. A transposed, flipped, or wrongly-rotated read of the HEALPix
+// sphere would scramble that relationship, and no amount of tuning would restore it.
+{
+  const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
+  if (tauRiftOn.length < 50 || tauRiftOff.length < 50) {
+    throw new Error(`rift gate has too few sight lines: on=${tauRiftOn.length}, off=${tauRiftOff.length}`)
+  }
+  const on = mean(tauRiftOn), off = mean(tauRiftOff)
+  const ratio = on / off
+  console.log(
+    `rift gate: tau at 1 kpc toward (l=30,b=0) ${on.toFixed(3)} (n=${tauRiftOn.length}) vs ` +
+    `(l=30,b=+20) ${off.toFixed(3)} (n=${tauRiftOff.length}) -> ${ratio.toFixed(2)}x`)
+  if (!(ratio >= 2)) {
+    throw new Error(`rift gate failed: in-plane tau is only ${ratio.toFixed(2)}x the off-plane tau ` +
+      `(expected >= 2x) — the dust map is probably being read in the wrong orientation`)
+  }
 }
 
 const catalog = { count, positions, absMag: absMagArr, colorIndex: ciArr }

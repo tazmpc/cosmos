@@ -53,11 +53,16 @@ Pulling back from Earth crosses three layers, crossfaded by distance:
 
 1. **Stars** (728k, Gaia DR3 + HYG) — every point is a real star at its real position,
    sized and colored by its real apparent magnitude from wherever you're standing.
+   Colors come from Gaia's **measured** effective temperature wherever GSP-Phot fitted
+   one, falling back to the BP−RP photometric index otherwise.
 2. **The Milky Way** — the modeled layers, clearly labeled as such. Two datasets share
    the job: from **inside** the galaxy you see a layer whose sky-plane density is
    **real** (measured from a 1M-star Gaia sample — the Great Rift and dust patchiness
    you see are genuinely in the data) with **modeled** depth along each sight line
-   (exponential disk + spiral arms + dust + bulge). From **outside** (~20 kpc up),
+   (exponential disk + spiral arms + dust + bulge). The dust reddening along the first
+   1.25 kpc of every sight line is **measured** too — the Edenhofer et al. (2023) 3D
+   dust map — so the reddening across the band follows real clouds (the Aquila Rift,
+   Orion, ρ Ophiuchi, Cygnus) rather than a smooth exponential. From **outside** (~20 kpc up),
    it crossfades to a second layer sampled **entirely from that same analytic model** —
    no Gaia positions — because the measured sky, being Sun-centered, cannot show the
    galaxy's face-on structure. Both render as unresolved glow, not individually-real
@@ -103,8 +108,11 @@ for astrometry.
 ## Rebuild the galaxy / Milky Way catalogs
 
     npm run galaxies   # SDSS + 2MRS -> public/galaxies.bin (~918k galaxies)
+    npm run dustmap                 # Edenhofer 2023 3D dust -> scripts/cache/edenhofer-cum.bin (~1.6 GB download, once)
     npm run milkyway                # interior: Gaia sky density + model depth -> public/milkyway.bin (1M points)
     npm run milkyway -- --exterior  # exterior: fully model-sampled -> public/milkyway-ext.bin (1M points)
+
+`npm run milkyway` (interior only) needs the dust cache, so run `npm run dustmap` first.
 
 ## Rebuild the constellation lines
 
