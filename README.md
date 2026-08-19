@@ -53,8 +53,14 @@ Pulling back from Earth crosses three layers, crossfaded by distance:
 
 1. **Stars** (728k, Gaia DR3 + HYG) — every point is a real star at its real position,
    sized and colored by its real apparent magnitude from wherever you're standing.
-   Colors come from Gaia's **measured** effective temperature wherever GSP-Phot fitted
-   one, falling back to the BP−RP photometric index otherwise.
+   Colors are **observed** colors — what the star looks like from here, not its intrinsic
+   hue. For the **58.8%** of Gaia stars where GSP-Phot fitted an effective temperature,
+   the color is that measured temperature with the measured interstellar reddening along
+   that star's own sight line added back (Edenhofer et al. 2023, out to the star's own
+   distance). The remaining **41.2%** — GSP-Phot fits no temperature for every source,
+   notably the very bright saturated ones — fall back to Gaia's BP−RP index, which is an
+   observed color and so is already reddened. Named HYG stars (Sirius, Vega, …) keep
+   HYG's ground-based B−V, which for bright saturated stars is the better measurement.
 2. **The Milky Way** — the modeled layers, clearly labeled as such. Two datasets share
    the job: from **inside** the galaxy you see a layer whose sky-plane density is
    **real** (measured from a 1M-star Gaia sample — the Great Rift and dust patchiness
@@ -103,7 +109,9 @@ for astrometry.
 ## Rebuild the star catalog
 
     npm run catalog            # HYG only (~109k stars, fast, no download needed if cache present)
-    npm run catalog -- --gaia  # Gaia DR3 (~728k stars; needs scripts/cache/gaia.csv from ESA TAP — see scripts/build-catalog.ts)
+    npm run catalog -- --gaia  # Gaia DR3 (~728k stars; needs scripts/cache/gaia.csv + gaia_teff.csv from ESA TAP — see scripts/build-catalog.ts)
+
+`--gaia` also needs the dust cache for reddening, so run `npm run dustmap` first.
 
 ## Rebuild the galaxy / Milky Way catalogs
 

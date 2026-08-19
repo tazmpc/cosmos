@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude } from './starMath'
+import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude, eqjToGalactic } from './starMath'
+
+describe('eqjToGalactic', () => {
+  const DEG = Math.PI / 180
+  it('maps Sgr A* to its known small offset from the galactic origin', () => {
+    // Sgr A* sits at l = 359.944, b = -0.046 — the IAU frame origin is defined by the 1958
+    // radio-frame convention, not by the black hole, so a ~0.05 deg offset is the right answer.
+    const [l, b] = eqjToGalactic(266.41683, -29.00781)
+    expect(l / DEG).toBeCloseTo(-0.056, 2)
+    expect(b / DEG).toBeCloseTo(-0.046, 2)
+  })
+  it('maps the north galactic pole to b=+90', () => {
+    const [, b] = eqjToGalactic(192.85948, 27.12825)
+    expect(b / DEG).toBeCloseTo(90, 2)
+  })
+  it('maps the south galactic pole to b=-90', () => {
+    const [, b] = eqjToGalactic(12.85948, -27.12825)
+    expect(b / DEG).toBeCloseTo(-90, 2)
+  })
+  it('puts the galactic anticentre at l=180, b=0', () => {
+    const [l, b] = eqjToGalactic(86.41683, 28.93617)
+    expect(Math.abs(l / DEG)).toBeCloseTo(180, 0)
+    expect(b / DEG).toBeCloseTo(0, 0)
+  })
+  it('returns l in [-pi, pi] and b in [-pi/2, pi/2]', () => {
+    for (let i = 0; i < 200; i++) {
+      const [l, b] = eqjToGalactic((i * 37) % 360, ((i * 53) % 180) - 90)
+      expect(l).toBeGreaterThanOrEqual(-Math.PI)
+      expect(l).toBeLessThanOrEqual(Math.PI)
+      expect(Math.abs(b)).toBeLessThanOrEqual(Math.PI / 2 + 1e-12)
+    }
+  })
+})
 
 describe('raDecDistToXyz', () => {
   // Sirius: RA 6.7525 h, Dec −16.7161°, dist 2.637 pc (HYG values)

@@ -212,6 +212,24 @@ function analyticFraction(sKpc: number): number {
 const K_EMIT = 1.0
 const DUST_COVER_CAP = 2.5
 
+/** Line-of-sight extinction of the emitted points, in units of the sight-line optical depth:
+ *  a bin's sampling weight is multiplied by exp(-K_EMIT_LOS * tau(s)).
+ *
+ *  This is the interior build's replacement for the LOCAL dustCoverage carve above, and it is the
+ *  mechanism by which MEASURED near-field dust shapes what you see behind it: a point at 8 kpc
+ *  down a sight line that first passes through the Aquila Rift is suppressed by the rift's dust,
+ *  even though the rift itself sits inside the near-field zone that NEAR_SUPPRESS_KPC empties of
+ *  emitted points. The local carve cannot do that — it only ever dims points sitting INSIDE a
+ *  dust lane, never the ones hidden behind it.
+ *
+ *  1.0 means "attenuate by exactly the optical depth the same march already computes", so this
+ *  introduces no new free parameter: the dust that reddens a point is the dust that dims it.
+ *
+ *  Scope note: this shifts each ray's points nearer the Sun; it does NOT change how many points a
+ *  ray emits (exactly one, and the weights are normalized per ray), so the layer's sky-plane
+ *  brightness is untouched by construction — see the note above buildInterior. */
+const K_EMIT_LOS = 1.0
+
 /** The emissivity-attenuation coefficient actually in force. Defaults to K_EMIT (the interior
  *  build); buildExterior raises it to EXT_K_EMIT — see the note there for why the same dust needs
  *  a stronger carve when the galaxy is sampled volumetrically rather than along sight lines. */
@@ -343,6 +361,20 @@ dustGrid = loadDustMap()
 assertDustMapOrientation(dustGrid)
 dustScale = calibrateDustScale(dustGrid)
 
+// NOTE: the local emissivity carve stays ON here alongside the sight-line attenuation below.
+// They are not the same dust counted twice — measured against the emitted cloud, they do
+// different jobs, and dropping either one loses real structure:
+//
+//   * the LOCAL carve thins the cloud AT a dust lane. It is what puts a genuine deficit in the
+//     lanes: 3.81% of thin-disk points land inside a lane with it on, against a 5.1% random
+//     baseline. Switching it off measured 5.13% — the lanes vanish into the noise.
+//   * the SIGHT-LINE term (K_EMIT_LOS) pulls a ray's point nearer the Sun when the ray is dusty,
+//     which is what lets MEASURED near-field dust affect what sits behind it.
+//
+// The sight-line term cannot substitute for the local one, because each ray emits exactly one
+// point and its bin weights are normalized per ray: a compact foreground screen multiplies every
+// bin behind it by the same constant, which the normalization divides straight back out.
+
 // ---- parse Gaia sky-density sample (ra, dec in degrees) ----
 const raw = readFileSync('scripts/cache/gaia_density.csv', 'utf8')
 const lines = raw.split('\n')
@@ -429,11 +461,8 @@ for (let li = start; li < lines.length; li++) {
   for (let i = 0; i < N_BINS; i++) {
     const s = (i + 0.5) * BIN_WIDTH
     rhoAndDust(SUN_GC_X + s * g0, s * g1, s * g2)
-    const w = (USE_VOLUME_JACOBIAN ? outRho * s * s : outRho) *
-      (1 - Math.exp(-((s / NEAR_SUPPRESS_KPC) ** 2)))
-    weights[i] = w
-    wsum += w
 
+    // Dust column FIRST, so this bin's weight can be attenuated by the dust in front of it.
     const analyticStep = outDust * BIN_WIDTH
     const f = analyticFraction(s)
     if (f >= 1) {
@@ -446,6 +475,12 @@ for (let li = start; li < lines.length; li++) {
     }
     dustCum[i] = dAcc
     if (i === TAU_1KPC_BIN) tau1Kpc = K_TAU * dAcc
+
+    const w = (USE_VOLUME_JACOBIAN ? outRho * s * s : outRho) *
+      (1 - Math.exp(-((s / NEAR_SUPPRESS_KPC) ** 2))) *
+      Math.exp(-K_EMIT_LOS * K_TAU * dAcc)
+    weights[i] = w
+    wsum += w
   }
 
   // inverse-transform sample a bin, then jitter uniformly within it

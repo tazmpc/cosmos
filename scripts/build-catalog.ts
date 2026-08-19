@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { encodeCatalog } from '../src/data/catalogFormat'
-import { raDecDistToXyz } from '../src/data/starMath'
+import { raDecDistToXyz, eqjToGalactic } from '../src/data/starMath'
 import { ballesterosInverseCi } from '../src/data/starColor'
+import { decodeDustGrid, cumulativeE } from '../src/data/dustMap'
 
 // HYG v4.1 columns (header row names): id,hip,hd,hr,gl,bf,proper,ra,dec,dist,...,mag,absmag,spect,ci,...
 const csv = readFileSync('scripts/cache/hygdata.csv', 'utf8').split('\n')
@@ -98,11 +99,40 @@ if (process.argv.includes('--gaia')) {
     console.log(`loaded ${teffByPos.size} usable Gaia effective temperatures`)
   }
 
+  // ---- measured reddening (Edenhofer et al. 2023 3D dust) ----
+  //
+  // colorIndex in this catalog means "the color this star LOOKS from the viewpoint", not its
+  // intrinsic photospheric color — the shader turns it straight into an on-screen hue. A measured
+  // temperature alone gives the intrinsic color (GSP-Phot fits extinction out), so using it raw
+  // would strip the reddening a real observer sees and turn the dusty half of the sky uniformly
+  // blue. So the extinction is put back: ci = intrinsic(teff) + E(B−V) along that star's own
+  // sight line, out to its own distance.
+  //
+  // Unit note: the map is in "E of Zhang, Green & Rix (2023)", which the literature converts to
+  // E(B−V) with a factor within ~10-20% of unity depending on the extinction curve adopted. We
+  // use 1.0 and take the error as being inside that spread.
+  //
+  // Distance note: the map stops at 1.25 kpc. Beyond that, cumulativeE clamps to the value at the
+  // map's outer edge rather than extrapolating — so distant stars get the reddening accumulated
+  // over the first 1.25 kpc only. That is a LOWER BOUND on their true reddening, deliberately:
+  // inventing dust past the map's validity radius would be worse than under-reddening.
+  const REDDEN_CLAMP_LO = -0.4, REDDEN_CLAMP_HI = 2.5
+  let dustGrid: ReturnType<typeof decodeDustGrid>
+  {
+    let buf: Buffer
+    try {
+      buf = readFileSync('scripts/cache/edenhofer-cum.bin')
+    } catch {
+      throw new Error('measured dust map missing — run `npm run dustmap` first')
+    }
+    dustGrid = decodeDustGrid(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)
+  }
+
   const gaia = readFileSync('scripts/cache/gaia.csv', 'utf8').split('\n')
   const gh = gaia[0].split(',')
   const gi = (nm: string) => gh.indexOf(nm)
   const [gRa, gDec, gPar, gMag, gBpRp] = [gi('ra'), gi('dec'), gi('parallax'), gi('phot_g_mean_mag'), gi('bp_rp')]
-  let dropped = 0, measured = 0, fallback = 0
+  let dropped = 0, measured = 0, fallback = 0, ebvSum = 0, ebvMax = 0
   for (let i = 1; i < gaia.length; i++) {
     const f = gaia[i].split(',')
     if (f.length < gh.length) continue
@@ -114,19 +144,26 @@ if (process.argv.includes('--gaia')) {
     const [x, y, z] = raDecDistToXyz(raDeg / 15, decDeg, distPc)
     keepPos.push(x, y, z)
     keepAbs.push(parseFloat(f[gMag]) + 5 * (Math.log10(par) - 2)) // M = m + 5(log10 p_mas − 2)
-    // measured temperature -> color index where Gaia fitted one, BP−RP otherwise
+    // measured temperature (re-reddened along its own sight line) where Gaia fitted one;
+    // BP−RP otherwise, which is already an observed — hence already reddened — color
     const teff = teffByPos.get(posKey(raDeg, decDeg))
     if (teff !== undefined) {
-      keepCi.push(ballesterosInverseCi(teff))
+      const [l, b] = eqjToGalactic(raDeg, decDeg)
+      const ebv = cumulativeE(dustGrid, l, b, distPc)
+      const c = ballesterosInverseCi(teff) + ebv
+      keepCi.push(Math.max(REDDEN_CLAMP_LO, Math.min(REDDEN_CLAMP_HI, c)))
       measured++
+      ebvSum += ebv
+      if (ebv > ebvMax) ebvMax = ebv
     } else {
       const bpRp = parseFloat(f[gBpRp])
       keepCi.push(Number.isNaN(bpRp) ? 0.7 : bpRp)
       fallback++
     }
   }
-  console.log(`colors: ${measured} from measured teff, ${fallback} from BP−RP ` +
+  console.log(`colors: ${measured} from measured teff + measured reddening, ${fallback} from BP−RP ` +
     `(${((100 * measured) / (measured + fallback)).toFixed(1)}% measured)`)
+  console.log(`reddening applied to the measured set: mean E(B−V) ${(ebvSum / measured).toFixed(4)}, max ${ebvMax.toFixed(3)}`)
 
   const cat = {
     count: keepPos.length / 3,
