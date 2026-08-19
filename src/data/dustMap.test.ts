@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   ang2pixNest, pix2angNest, encodeDustGrid, decodeDustGrid, cumulativeE, type DustGrid,
 } from './dustMap'
+import { eqjToGalactic } from './starMath'
 
 const DEG = Math.PI / 180
 
@@ -112,6 +113,30 @@ describe('cumulativeE', () => {
       prev = v
     }
   })
+  // The star catalog reddens a star by composing eqjToGalactic -> cumulativeE on its RA/Dec.
+  // A one-hot grid makes that composition falsifiable end to end: put ALL the dust in the single
+  // pixel containing Orion A, and only a star pointed at Orion A may pick any of it up. This is
+  // the unit-level counterpart of the build's reddening-direction gate, and it catches a swapped
+  // l/b, a sign flip, or a degrees/radians slip that a smooth real map could hide.
+  it('reddens a star at Orion A from a one-hot pixel, and nothing 20 degrees away', () => {
+    const nside = 32
+    const npix = 12 * nside * nside
+    const nodes = new Float32Array([0, 500, 1000])
+    const cum = new Float32Array(3 * npix)
+    // Orion A / M42 sits at RA 83.8, Dec -5.4 (galactic l = 209.0, b = -19.4)
+    const [lOri, bOri] = eqjToGalactic(83.8, -5.4)
+    const oriPix = ang2pixNest(nside, Math.PI / 2 - bOri, lOri)
+    cum[1 * npix + oriPix] = 0.8
+    cum[2 * npix + oriPix] = 1.2
+    const oneHot: DustGrid = { nside, nodes, cum }
+
+    expect(cumulativeE(oneHot, lOri, bOri, 1000)).toBeCloseTo(1.2, 6)
+    expect(cumulativeE(oneHot, lOri, bOri, 500)).toBeCloseTo(0.8, 6)
+
+    const [lOff, bOff] = eqjToGalactic(83.8, 14.6) // same RA, 20 deg north
+    expect(cumulativeE(oneHot, lOff, bOff, 1000)).toBe(0)
+  })
+
   it('reads the pixel the (l, b) direction actually falls in', () => {
     // (l=0, b=0) is the centre of base face 4; (l=90, b=0) is face 5, which is empty.
     expect(cumulativeE(grid, 0, 0, 1000)).toBeCloseTo(1.5, 6)

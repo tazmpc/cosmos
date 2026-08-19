@@ -22,7 +22,7 @@ describe('ballesterosInverseCi', () => {
     expect(ballesterosInverseCi(3500)).toBeGreaterThan(1.5)
   })
   it('is strictly decreasing in T across the unclamped range', () => {
-    // clamping flattens the curve outside [3141 K, 21707 K] (where BV hits 2.0 / −0.4)
+    // clamping flattens the curve outside [3169 K, 21707 K] (where BV hits 2.0 / −0.4)
     let prev = Infinity
     for (let t = 3200; t <= 21000; t += 100) {
       const ci = ballesterosInverseCi(t)

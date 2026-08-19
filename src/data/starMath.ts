@@ -23,6 +23,50 @@ export function eqjToGalactic(raDeg: number, decDeg: number): [number, number] {
   return [Math.atan2(g[1], g[0]), Math.asin(Math.max(-1, Math.min(1, g[2])))]
 }
 
+/** Evaluate a polynomial given coefficients in ASCENDING order: c[0] + c[1]x + c[2]x² + … */
+export function polyval(coeffs: number[], x: number): number {
+  let acc = 0
+  for (let i = coeffs.length - 1; i >= 0; i--) acc = acc * x + coeffs[i]
+  return acc
+}
+
+/**
+ * Least-squares polynomial fit, returning coefficients in ASCENDING order.
+ * Solves the normal equations by Gauss-Jordan elimination with partial pivoting — fine for the
+ * low degrees used here (the normal equations get ill-conditioned well before degree ~6).
+ */
+export function polyfit(xs: number[], ys: number[], degree: number): number[] {
+  if (xs.length !== ys.length) throw new Error('polyfit: x and y length mismatch')
+  if (xs.length <= degree) throw new Error('polyfit: not enough points for that degree')
+  const n = degree + 1
+  const powers = new Array(2 * degree + 1).fill(0)
+  const rhs = new Array(n).fill(0)
+  for (let i = 0; i < xs.length; i++) {
+    let p = 1
+    for (let k = 0; k <= 2 * degree; k++) { powers[k] += p; p *= xs[i] }
+    p = 1
+    for (let k = 0; k < n; k++) { rhs[k] += ys[i] * p; p *= xs[i] }
+  }
+  const m: number[][] = Array.from({ length: n }, (_, r) => {
+    const row = new Array(n + 1)
+    for (let c = 0; c < n; c++) row[c] = powers[r + c]
+    row[n] = rhs[r]
+    return row
+  })
+  for (let c = 0; c < n; c++) {
+    let piv = c
+    for (let r = c + 1; r < n; r++) if (Math.abs(m[r][c]) > Math.abs(m[piv][c])) piv = r
+    if (m[piv][c] === 0) throw new Error('polyfit: singular normal equations')
+    ;[m[c], m[piv]] = [m[piv], m[c]]
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue
+      const factor = m[r][c] / m[c][c]
+      for (let k = c; k <= n; k++) m[r][k] -= factor * m[c][k]
+    }
+  }
+  return m.map((row, i) => row[n] / m[i][i])
+}
+
 /** Apparent → absolute magnitude at dist parsecs. */
 export function absoluteMagnitude(apparentMag: number, distPc: number): number {
   return apparentMag - 5 * (Math.log10(distPc) - 1)

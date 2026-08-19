@@ -59,8 +59,10 @@ Pulling back from Earth crosses three layers, crossfaded by distance:
    that star's own sight line added back (Edenhofer et al. 2023, out to the star's own
    distance). The remaining **41.2%** — GSP-Phot fits no temperature for every source,
    notably the very bright saturated ones — fall back to Gaia's BP−RP index, which is an
-   observed color and so is already reddened. Named HYG stars (Sirius, Vega, …) keep
-   HYG's ground-based B−V, which for bright saturated stars is the better measurement.
+   observed color and so is already reddened; it is converted onto the same B−V scale by
+   a cubic refitted at build time against the stars that have both, so the two halves of
+   the sky can't drift apart in hue. Named HYG stars (Sirius, Vega, …) keep HYG's
+   ground-based B−V, which for bright saturated stars is the better measurement.
 2. **The Milky Way** — the modeled layers, clearly labeled as such. Two datasets share
    the job: from **inside** the galaxy you see a layer whose sky-plane density is
    **real** (measured from a 1M-star Gaia sample — the Great Rift and dust patchiness
@@ -68,7 +70,13 @@ Pulling back from Earth crosses three layers, crossfaded by distance:
    (exponential disk + spiral arms + dust + bulge). The dust reddening along the first
    1.25 kpc of every sight line is **measured** too — the Edenhofer et al. (2023) 3D
    dust map — so the reddening across the band follows real clouds (the Aquila Rift,
-   Orion, ρ Ophiuchi, Cygnus) rather than a smooth exponential. From **outside** (~20 kpc up),
+   Orion, ρ Ophiuchi, Cygnus) rather than a smooth exponential. That measured dust
+   **reddens the band but cannot darken it**: this layer emits exactly one point per
+   Gaia sky direction and normalizes each sight line's weights on its own, so extinction
+   moves points nearer along a dusty ray but can never change how many a direction gets.
+   The Great Rift still reads as dark here for the honest reason — Gaia's own star
+   counts are depleted behind it, which is measured data, not anything the model adds.
+   From **outside** (~20 kpc up),
    it crossfades to a second layer sampled **entirely from that same analytic model** —
    no Gaia positions — because the measured sky, being Sun-centered, cannot show the
    galaxy's face-on structure. Both render as unresolved glow, not individually-real
@@ -117,6 +125,7 @@ for astrometry.
 
     npm run galaxies   # SDSS + 2MRS -> public/galaxies.bin (~918k galaxies)
     npm run dustmap                 # Edenhofer 2023 3D dust -> scripts/cache/edenhofer-cum.bin (~1.6 GB download, once)
+    npm run dustmap -- --mean FILE  # ...reusing an already-downloaded copy of the map's MEAN cube instead of refetching
     npm run milkyway                # interior: Gaia sky density + model depth -> public/milkyway.bin (1M points)
     npm run milkyway -- --exterior  # exterior: fully model-sampled -> public/milkyway-ext.bin (1M points)
 

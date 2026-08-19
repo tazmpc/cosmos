@@ -1,5 +1,38 @@
 import { describe, it, expect } from 'vitest'
-import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude, eqjToGalactic } from './starMath'
+import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude, eqjToGalactic, polyfit, polyval } from './starMath'
+
+describe('polyval', () => {
+  it('evaluates ascending-order coefficients', () => {
+    expect(polyval([1, 2, 3], 2)).toBe(1 + 4 + 12) // 1 + 2x + 3x²
+    expect(polyval([5], 99)).toBe(5)
+  })
+})
+
+describe('polyfit', () => {
+  it('recovers a line exactly from noiseless points', () => {
+    const xs = [0, 1, 2, 3, 4], ys = xs.map(x => 0.7045 * x + 0.0709)
+    const c = polyfit(xs, ys, 1)
+    expect(c[0]).toBeCloseTo(0.0709, 6)
+    expect(c[1]).toBeCloseTo(0.7045, 6)
+  })
+  it('recovers a cubic exactly from noiseless points', () => {
+    const truth = [-0.05, 1.04, -0.18, 0.011]
+    const xs = [-0.5, 0, 0.4, 0.9, 1.5, 2.1, 2.8, 3.4]
+    const c = polyfit(xs, xs.map(x => polyval(truth, x)), 3)
+    for (let i = 0; i < truth.length; i++) expect(c[i]).toBeCloseTo(truth[i], 5)
+  })
+  it('averages through symmetric noise rather than interpolating it', () => {
+    const xs: number[] = [], ys: number[] = []
+    for (let i = 0; i < 100; i++) { xs.push(i / 10); ys.push(2 * (i / 10) + 1 + (i % 2 ? 0.5 : -0.5)) }
+    const c = polyfit(xs, ys, 1)
+    expect(c[0]).toBeCloseTo(1, 1)
+    expect(c[1]).toBeCloseTo(2, 2)
+  })
+  it('rejects degenerate input', () => {
+    expect(() => polyfit([1, 2], [1], 1)).toThrow(/mismatch/)
+    expect(() => polyfit([1, 2], [1, 2], 3)).toThrow(/not enough points/)
+  })
+})
 
 describe('eqjToGalactic', () => {
   const DEG = Math.PI / 180

@@ -202,7 +202,7 @@ function analyticFraction(sKpc: number): number {
  *
  *  Why this exists, and why the line-of-sight tau alone is not enough: this layer renders as an
  *  emission-only additive point cloud whose on-screen brightness is purely the projected point
- *  DENSITY (main.ts pins the layer at faintMag 30 / alphaCap 0.10, which saturates both the
+ *  DENSITY (main.ts pins the layer at faintMag 30 / alphaCap 0.055, which saturates both the
  *  shader's alpha ramp and its gl_PointSize clamp — so a per-point absMag change, including the
  *  extinction added below, cannot dim anything on screen). Real dust lanes are *absorption*, and
  *  the only way absorption can appear in an emission-only cloud is as a local deficit of points.
