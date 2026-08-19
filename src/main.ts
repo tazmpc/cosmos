@@ -656,7 +656,7 @@ function frame(realMs: number) {
   hudDist.textContent = formatDistance(controls.distance)
 
   engine.composer.render()
-  // Kicked only once (the call is guarded): the belt's 7 MB fetch and buffer build wait until a
+  // Kicked only once (the call is guarded): the belt's 17 MB fetch and buffer build wait until a
   // frame has actually been presented, so they can never delay first paint.
   startAsteroidLoad()
   requestAnimationFrame(frame)
