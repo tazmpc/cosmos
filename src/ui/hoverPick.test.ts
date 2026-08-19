@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { pickNearest, HOVER_PRIORITY, type HoverCandidate } from './hoverPick'
+import {
+  pickNearest, placeLabel, HOVER_PRIORITY, HOVER_LABEL_GAP_PX, HOVER_LABEL_RISE_PX,
+  HOVER_LABEL_MARGIN_PX, type HoverCandidate,
+} from './hoverPick'
 
 function c(name: string, sx: number, sy: number, priority = 1): HoverCandidate {
   return { name, kind: 'star', label: 'star', sx, sy, priority }
@@ -58,5 +61,52 @@ describe('pickNearest', () => {
     type Tagged = HoverCandidate & { tag: number }
     const cands: Tagged[] = [{ ...c('A', 105, 100), tag: 7 }, { ...c('B', 200, 100), tag: 9 }]
     expect(pickNearest(cands, 100, 100, 16)?.tag).toBe(7)
+  })
+})
+
+describe('placeLabel', () => {
+  const VIEW_W = 1000
+  const VIEW_H = 800
+  const W = 120
+  const H = 24
+  const place = (sx: number, sy: number) => placeLabel(sx, sy, W, H, VIEW_W, VIEW_H)
+
+  it('sits to the upper right of the point when there is room', () => {
+    expect(place(400, 400)).toEqual({
+      x: 400 + HOVER_LABEL_GAP_PX, y: 400 - HOVER_LABEL_RISE_PX, flipped: false,
+    })
+  })
+
+  it('flips to the left of the point when the right edge would clip it', () => {
+    const p = place(950, 400)
+    expect(p.flipped).toBe(true)
+    expect(p.x).toBe(950 - HOVER_LABEL_GAP_PX - W)
+    expect(p.x + W).toBeLessThanOrEqual(VIEW_W - HOVER_LABEL_MARGIN_PX)
+  })
+
+  it('clamps into view when flipping left would clip the left edge too', () => {
+    // A point close to both edges of a viewport narrower than the label itself.
+    const p = placeLabel(20, 400, 200, H, 180, VIEW_H)
+    expect(p.x).toBe(HOVER_LABEL_MARGIN_PX)
+  })
+
+  it('clamps to the top margin near the top edge', () => {
+    expect(place(400, 2).y).toBe(HOVER_LABEL_MARGIN_PX)
+  })
+
+  it('clamps to the bottom margin near the bottom edge', () => {
+    expect(place(400, VIEW_H - 2).y).toBe(VIEW_H - H - HOVER_LABEL_MARGIN_PX)
+  })
+
+  it('keeps the label fully inside the viewport at every corner', () => {
+    for (const sx of [0, 1, VIEW_W - 1, VIEW_W]) {
+      for (const sy of [0, 1, VIEW_H - 1, VIEW_H]) {
+        const p = place(sx, sy)
+        expect(p.x).toBeGreaterThanOrEqual(HOVER_LABEL_MARGIN_PX)
+        expect(p.y).toBeGreaterThanOrEqual(HOVER_LABEL_MARGIN_PX)
+        expect(p.x + W).toBeLessThanOrEqual(VIEW_W - HOVER_LABEL_MARGIN_PX)
+        expect(p.y + H).toBeLessThanOrEqual(VIEW_H - HOVER_LABEL_MARGIN_PX)
+      }
+    }
   })
 })

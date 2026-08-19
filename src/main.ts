@@ -37,7 +37,7 @@ import {
 } from './scene/spacecraft'
 import type { FamousAsteroid } from './data/asteroids'
 import { MPC_TO_AU, PC_TO_AU } from './data/units'
-import { pickNearest, HOVER_PRIORITY, type HoverCandidate, type HoverKind } from './ui/hoverPick'
+import { pickNearest, placeLabel, HOVER_PRIORITY, type HoverCandidate, type HoverKind } from './ui/hoverPick'
 import { dateToJd } from './sim/kepler'
 import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
 
@@ -662,9 +662,20 @@ const hoverLabel = document.getElementById('hover-label')!
 const hoverNameEl = hoverLabel.querySelector('.hover-name')!
 const hoverKindEl = hoverLabel.querySelector('.hover-kind')!
 let hoverPointerDown = false
+let hoverInside = false // is the cursor over the canvas at all?
+let hoverMx = 0
+let hoverMy = 0
 let lastHoverMs = 0
+let hoverShown = false
+// Measuring the label costs a forced layout, so its size is cached and only re-measured when the
+// text actually changes — which is on the order of once per hovered object, not once per pass.
+let hoverMeasuredText = ''
+let hoverW = 0
+let hoverH = 0
 
 function hideHoverLabel(): void {
+  if (!hoverShown) return // idempotent: the per-frame path calls this on most frames
+  hoverShown = false
   hoverLabel.style.opacity = '0'
   engine.renderer.domElement.style.cursor = ''
 }
@@ -672,25 +683,48 @@ function hideHoverLabel(): void {
 function updateHoverLabel(mx: number, my: number): void {
   const pick = pickNearest(hoverCandidates(), mx, my, HOVER_RADIUS_PX)
   if (!pick) { hideHoverLabel(); return }
-  hoverNameEl.textContent = pick.name
-  hoverKindEl.textContent = ` · ${pick.label ?? pick.kind}`
-  hoverLabel.style.left = `${pick.sx + 14}px`
-  hoverLabel.style.top = `${pick.sy - 10}px`
-  hoverLabel.style.opacity = '1'
-  engine.renderer.domElement.style.cursor = 'pointer'
+  const text = `${pick.name} · ${pick.label ?? pick.kind}`
+  if (text !== hoverMeasuredText) {
+    hoverNameEl.textContent = pick.name
+    hoverKindEl.textContent = ` · ${pick.label ?? pick.kind}`
+    hoverMeasuredText = text
+    hoverW = hoverLabel.offsetWidth
+    hoverH = hoverLabel.offsetHeight
+  }
+  const { x, y } = placeLabel(pick.sx, pick.sy, hoverW, hoverH, window.innerWidth, window.innerHeight)
+  hoverLabel.style.left = `${x}px`
+  hoverLabel.style.top = `${y}px`
+  if (!hoverShown) {
+    hoverShown = true
+    hoverLabel.style.opacity = '1'
+    engine.renderer.domElement.style.cursor = 'pointer'
+  }
 }
 
-engine.renderer.domElement.addEventListener('pointermove', (ev) => {
+/** One hover pass at the last known cursor position, subject to the throttle and the suppression
+ *  rules. Driven BOTH by pointermove (so the label reacts immediately to the cursor) and by
+ *  frame() (so it keeps up with a moving target — a moon at 1 day/s, a spacecraft, the whole sky
+ *  settling after a fly-to — under a cursor that is not moving at all). */
+function refreshHover(): void {
   // No labels mid-drag (the cursor is steering the camera, not pointing at anything) or during a
   // fly-to (the whole scene is sweeping past — every label would be noise, and stale by the time
   // it is drawn).
-  if (hoverPointerDown || flyer.isActive()) { hideHoverLabel(); return }
+  if (!hoverInside || hoverPointerDown || flyer.isActive()) { hideHoverLabel(); return }
   const now = performance.now()
   if (now - lastHoverMs < HOVER_THROTTLE_MS) return
   lastHoverMs = now
-  updateHoverLabel(ev.clientX, ev.clientY)
+  updateHoverLabel(hoverMx, hoverMy)
+}
+
+engine.renderer.domElement.addEventListener('pointermove', (ev) => {
+  hoverInside = true
+  hoverMx = ev.clientX; hoverMy = ev.clientY
+  refreshHover()
 })
-engine.renderer.domElement.addEventListener('pointerleave', hideHoverLabel)
+engine.renderer.domElement.addEventListener('pointerleave', () => {
+  hoverInside = false
+  hideHoverLabel()
+})
 window.addEventListener('pointerup', () => { hoverPointerDown = false })
 window.addEventListener('pointercancel', () => { hoverPointerDown = false })
 // -------------------------------------------------------------------------------------------
@@ -802,6 +836,13 @@ function frame(realMs: number) {
   // too, but only after updateEarthNight() needs to read it.
   engine.camera.updateMatrixWorld()
   updateEarthNight(engine.camera)
+
+  // Hover labels re-pick every frame (throttled inside refreshHover), not only on pointermove, so
+  // a label stays glued to a target that is moving under a stationary cursor — a moon at 1 day/s,
+  // a spacecraft, or the whole scene settling at the end of a fly-to. Placed here because it
+  // projects with THIS frame's camera matrices (updateMatrixWorld above refreshes
+  // matrixWorldInverse, which Vector3.project reads).
+  refreshHover()
 
   // Point layers update AFTER the camera transform block above (and its updateMatrixWorld): each
   // one frustum-culls its spatial chunks against camera.projectionMatrix * matrixWorldInverse, so
