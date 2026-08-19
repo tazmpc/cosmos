@@ -89,6 +89,7 @@ const CRAFT: CraftSpec[] = [
       Location: 'Orbits the Sun-Earth L2 point, about 1.5 million km beyond Earth',
       'Mirror diameter': '6.5 m, 18 hexagonal gold-coated segments',
       Note: 'Observes primarily in infrared light, letting it see through dust clouds and look further back in cosmic time than any prior telescope. Its halo orbit around L2 is unstable and needs periodic station-keeping burns.',
+      'Trajectory data': 'JPL Horizons predicted ephemeris through August 2031 (station-keeping burns are not planned further ahead) — beyond that the position is held at its last known point while Earth keeps orbiting.',
     },
   },
 ]
