@@ -7,13 +7,13 @@ import { createSolarSystem, updatePositions, repositionMeshes, updateEarthNight,
 import { SimClock } from './sim/clock'
 import { formatDistance } from './ui/format'
 import { loadStarField, loadPointLayer, type StarField, type PointLayer } from './scene/starField'
-import { createBrightStarHalos, type BrightStarHalos } from './scene/brightStars'
+import { createBrightStarHalos, HALO_MAG_LIMIT, type BrightStarHalos } from './scene/brightStars'
 import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
 import { createGalaxySprites, createDeepSkySprites, createStandaloneGlowSprite } from './scene/galaxySprites'
 import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets, type ImageTarget } from './scene/objectImagery'
 import { layerAlphas } from './scene/layerAlphas'
 import { showBanner, hideBanner } from './ui/banner'
-import { apparentMagnitude } from './data/starMath'
+import { apparentMagnitude, raDecDistToXyz } from './data/starMath'
 import { angularFovDegFromArcmin } from './data/angularSize'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
 import { loadConstellations, type ConstellationLines } from './scene/constellations'
@@ -33,10 +33,11 @@ import {
 } from './scene/asteroidField'
 import {
   loadSpacecraftField, spacecraftFocusable, spacecraftPositionAt,
-  SPACECRAFT_ARRIVE_AU, type SpacecraftField,
+  SPACECRAFT_ARRIVE_AU, type SpacecraftField, type SpacecraftDef,
 } from './scene/spacecraft'
 import type { FamousAsteroid } from './data/asteroids'
-import { PC_TO_AU } from './data/units'
+import { MPC_TO_AU, PC_TO_AU } from './data/units'
+import { pickNearest, HOVER_PRIORITY, type HoverCandidate, type HoverKind } from './ui/hoverPick'
 import { dateToJd } from './sim/kepler'
 import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
 
@@ -48,6 +49,9 @@ const orbits = createOrbitLines(engine.scene, clock.now())
 
 let stars: StarField | null = null
 let brightStars: BrightStarHalos | null = null
+/** Named stars eligible to be hover-labelled, filled in once the star catalog loads — see the
+ *  hover-label section near the bottom of this file. */
+let starHoverList: { name: string; idx: number; entry: SearchEntry }[] = []
 
 // OpenNGC (~12.4k deep-sky objects, public/openngc.json — see scripts/build-openngc.ts) loads in
 // parallel with everything else and merges its search entries in once both it and the star field
@@ -148,6 +152,19 @@ loadStarField(engine.scene)
     // Earth — the point shader clamps every star to the same maximum dot, so without this Sirius
     // looks exactly like any other star.
     brightStars = createBrightStarHalos(engine.scene, s.catalog)
+    const starEntries: SearchEntry[] = Object.entries(s.names).map(([name, idx]) => ({
+      name, kind: 'star' as const, key: idx,
+      // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
+      mag: apparentMagnitude(s.catalog.absMag[idx], Math.hypot(
+        s.catalog.positions[idx * 3],
+        s.catalog.positions[idx * 3 + 1],
+        s.catalog.positions[idx * 3 + 2])),
+    }))
+    // Named-star hover candidates (see the hover-label section further down). Same entries the
+    // search box ranks, paired with their catalog index, built once here so the per-pointermove
+    // pass allocates nothing extra. WHICH of them actually get a label is decided per pass by
+    // apparent magnitude from the CAMERA (not from Earth) — see hoverCandidates().
+    starHoverList = starEntries.map((e) => ({ name: e.name, idx: e.key as number, entry: e }))
     const searchEntries: SearchEntry[] = [
       ...planets.map(p => ({
         name: p.def.name, kind: 'planet' as const, key: p.def.id, mag: -30,
@@ -158,14 +175,7 @@ loadStarField(engine.scene)
         .map(g => ({ name: g.name, kind: 'galaxy' as const, key: g.id, mag: -26 })),
       ...[...DEEP_SKY].sort((a, b) => a.name.localeCompare(b.name))
         .map(d => ({ name: d.name, kind: 'dso' as const, key: d.id, mag: -26, label: 'deep sky' })),
-      ...Object.entries(s.names).map(([name, idx]) => ({
-        name, kind: 'star' as const, key: idx,
-        // apparent magnitude (distance in pc): ties rank by how bright the star actually looks
-        mag: apparentMagnitude(s.catalog.absMag[idx], Math.hypot(
-          s.catalog.positions[idx * 3],
-          s.catalog.positions[idx * 3 + 1],
-          s.catalog.positions[idx * 3 + 2])),
-      })),
+      ...starEntries,
     ]
     setupSearch(searchEntries)
 
@@ -520,21 +530,202 @@ function setupSearch(entries: SearchEntry[]): void {
   })
 }
 
-// click-to-focus: planets via raycast; named stars via screen-space proximity
+// --- Hover labels for notable objects ------------------------------------------------------
+// Cursor proximity reveals a floating name label for the things this project treats as landmarks:
+// every planet and moon, the four spacecraft, the twelve famous asteroids, the curated galaxies
+// and deep-sky objects, and named stars that are actually BRIGHT from where the camera is.
+//
+// Explicitly NOT labelled: OpenNGC (12.4k objects), galaxies.bin, the 486k-asteroid belt, the
+// Milky Way layers, and the 728k unnamed/faint stars. Those are bulk texture, not destinations —
+// labelling them would turn every pointer move into a wall of text. The candidate set built here
+// is ~380 objects at its largest, so the whole pass is a few hundred vector projections.
+//
+// The label is also the click target: whatever is labelled is what a click focuses (see the click
+// handler below), so "what you see is what you get" holds instead of the label and the click
+// disagreeing about what the cursor is over.
+
+/** A hover candidate plus the SearchEntry focusing it would use — clicking a label therefore takes
+ *  exactly the same code path as picking the object out of the search box (focusEntry). */
+type HoverTarget = HoverCandidate & { entry: SearchEntry }
+
+const HOVER_RADIUS_PX = 16
+/** ~30 Hz. Cheap enough that the cap is about not doing pointless work on a high-rate mouse
+ *  (pointermove can fire at the display's refresh rate or faster), not about cost pressure. */
+const HOVER_THROTTLE_MS = 33
+/** A named star gets a label only when it is at least this bright FROM THE CAMERA. Deliberately
+ *  the same cutoff as the glare halos (brightStars.ts): the stars that visibly sparkle are exactly
+ *  the ones the user means by "major stars close by". Being camera-relative (not Earth-relative)
+ *  is what makes this behave correctly after flying somewhere else — a star you have approached
+ *  becomes hoverable, and from a Mpc out nothing stellar is. */
+const HOVER_STAR_MAG_LIMIT = HALO_MAG_LIMIT
+
+// Static true positions (heliocentric EQJ AU), computed once — these objects never move.
+const galaxyHoverTargets = GALAXIES.map((def) => {
+  const [x, y, z] = raDecDistToXyz(def.raHours, def.decDeg, def.distMpc)
+  return {
+    pos: new THREE.Vector3(x * MPC_TO_AU, y * MPC_TO_AU, z * MPC_TO_AU),
+    entry: { name: def.name, kind: 'galaxy' as const, key: def.id, mag: -26 },
+  }
+})
+const deepSkyHoverTargets = DEEP_SKY.map((def) => {
+  const [x, y, z] = raDecDistToXyz(def.raHours, def.decDeg, def.distPc)
+  return {
+    pos: new THREE.Vector3(x * PC_TO_AU, y * PC_TO_AU, z * PC_TO_AU),
+    entry: { name: def.name, kind: 'dso' as const, key: def.id, mag: -26 },
+  }
+})
+const planetHoverTargets = planets.map((node) => ({
+  node,
+  // The Sun keeps planet PRIORITY (it is a solid body you fly to, not a catalog point) but is
+  // labelled "star", matching how the search box labels it.
+  kind: (node.def.parent != null ? 'moon' : 'planet') as HoverKind,
+  label: node.def.id === 'sun' ? 'star' : node.def.parent != null ? 'moon' : 'planet',
+  entry: { name: node.def.name, kind: 'planet' as const, key: node.def.id, mag: -30 },
+}))
+// The live-position layers join once their (deferred) loads land, same pattern as their search
+// entries: an empty array until then, so hover simply has fewer candidates early on.
+const asteroidHoverTargets: { index: number; entry: SearchEntry }[] = []
+asteroidPromise.then((field) => {
+  if (!field) return
+  for (const { def, index } of famousAsteroidEntries(field)) {
+    asteroidHoverTargets.push({ index, entry: { name: def.name, kind: 'asteroid', key: def.id, mag: -26 } })
+  }
+})
+const spacecraftHoverTargets: { def: SpacecraftDef; entry: SearchEntry }[] = []
+spacecraftPromise.then((field) => {
+  if (!field) return
+  for (const def of field.defs) {
+    spacecraftHoverTargets.push({ def, entry: { name: def.name, kind: 'spacecraft', key: def.id, mag: -26 } })
+  }
+})
+
+const hoverProj = new THREE.Vector3() // reused by every projection in the pass — no allocation
+
+/** Projects one true heliocentric position (AU) to CSS pixels and appends it as a candidate.
+ *  Drops anything behind the camera, and anything that projects to a non-finite point — which is
+ *  what happens to a body sitting exactly at the camera (Earth in sky view: clip w = 0). */
+function pushHoverCandidate(
+  out: HoverTarget[], tx: number, ty: number, tz: number,
+  name: string, kind: HoverKind, entry: SearchEntry, label?: string,
+): void {
+  hoverProj.set(tx - camTruePos.x, ty - camTruePos.y, tz - camTruePos.z).project(engine.camera)
+  if (hoverProj.z > 1) return
+  const sx = (hoverProj.x * 0.5 + 0.5) * window.innerWidth
+  const sy = (-hoverProj.y * 0.5 + 0.5) * window.innerHeight
+  if (!Number.isFinite(sx) || !Number.isFinite(sy)) return
+  out.push({ name, kind, label, sx, sy, priority: HOVER_PRIORITY[kind], entry })
+}
+
+const hoverScratch = new THREE.Vector3()
+
+/** Builds this pass's candidate set: everything notable that is currently on screen. */
+function hoverCandidates(): HoverTarget[] {
+  const out: HoverTarget[] = []
+  for (const t of planetHoverTargets) {
+    const p = t.node.truePos
+    pushHoverCandidate(out, p.x, p.y, p.z, t.node.def.name, t.kind, t.entry, t.label)
+  }
+  for (const t of spacecraftHoverTargets) {
+    const p = spacecraftPositionAt(t.def, dateToJd(clock.now()))
+    pushHoverCandidate(out, p.x, p.y, p.z, t.def.name, 'spacecraft', t.entry)
+  }
+  if (asteroids) {
+    const jd = dateToJd(clock.now())
+    for (const t of asteroidHoverTargets) {
+      const p = asteroids.positionAt(t.index, jd, hoverScratch)
+      pushHoverCandidate(out, p.x, p.y, p.z, t.entry.name, 'asteroid', t.entry)
+    }
+  }
+  for (const t of galaxyHoverTargets) {
+    pushHoverCandidate(out, t.pos.x, t.pos.y, t.pos.z, t.entry.name, 'galaxy', t.entry)
+  }
+  for (const t of deepSkyHoverTargets) {
+    pushHoverCandidate(out, t.pos.x, t.pos.y, t.pos.z, t.entry.name, 'dso', t.entry, 'deep sky')
+  }
+  if (stars) {
+    const pos = stars.catalog.positions
+    const absMag = stars.catalog.absMag
+    for (const t of starHoverList) {
+      const x = pos[t.idx * 3] * PC_TO_AU
+      const y = pos[t.idx * 3 + 1] * PC_TO_AU
+      const z = pos[t.idx * 3 + 2] * PC_TO_AU
+      const distPc = Math.hypot(x - camTruePos.x, y - camTruePos.y, z - camTruePos.z) / PC_TO_AU
+      const appMag = apparentMagnitude(absMag[t.idx], distPc)
+      if (!Number.isFinite(appMag) || appMag > HOVER_STAR_MAG_LIMIT) continue
+      pushHoverCandidate(out, x, y, z, t.name, 'star', t.entry)
+    }
+  }
+  return out
+}
+
+const hoverLabel = document.getElementById('hover-label')!
+const hoverNameEl = hoverLabel.querySelector('.hover-name')!
+const hoverKindEl = hoverLabel.querySelector('.hover-kind')!
+let hoverPointerDown = false
+let lastHoverMs = 0
+
+function hideHoverLabel(): void {
+  hoverLabel.style.opacity = '0'
+  engine.renderer.domElement.style.cursor = ''
+}
+
+function updateHoverLabel(mx: number, my: number): void {
+  const pick = pickNearest(hoverCandidates(), mx, my, HOVER_RADIUS_PX)
+  if (!pick) { hideHoverLabel(); return }
+  hoverNameEl.textContent = pick.name
+  hoverKindEl.textContent = ` · ${pick.label ?? pick.kind}`
+  hoverLabel.style.left = `${pick.sx + 14}px`
+  hoverLabel.style.top = `${pick.sy - 10}px`
+  hoverLabel.style.opacity = '1'
+  engine.renderer.domElement.style.cursor = 'pointer'
+}
+
+engine.renderer.domElement.addEventListener('pointermove', (ev) => {
+  // No labels mid-drag (the cursor is steering the camera, not pointing at anything) or during a
+  // fly-to (the whole scene is sweeping past — every label would be noise, and stale by the time
+  // it is drawn).
+  if (hoverPointerDown || flyer.isActive()) { hideHoverLabel(); return }
+  const now = performance.now()
+  if (now - lastHoverMs < HOVER_THROTTLE_MS) return
+  lastHoverMs = now
+  updateHoverLabel(ev.clientX, ev.clientY)
+})
+engine.renderer.domElement.addEventListener('pointerleave', hideHoverLabel)
+window.addEventListener('pointerup', () => { hoverPointerDown = false })
+window.addEventListener('pointercancel', () => { hoverPointerDown = false })
+// -------------------------------------------------------------------------------------------
+
+// click-to-focus: whatever the hover label is offering (see above); planets via raycast otherwise
 const raycaster = new THREE.Raycaster()
 // camera drags synthesize a click on release — suppress those (>5 px pointer travel)
 let downX = 0
 let downY = 0
 engine.renderer.domElement.addEventListener('pointerdown', (ev) => {
   downX = ev.clientX; downY = ev.clientY
+  hoverPointerDown = true
+  hideHoverLabel()
 })
 engine.renderer.domElement.addEventListener('click', (ev) => {
   if (mode === 'sky') return // click-to-focus is disabled entirely in sky mode
   if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 5) return
   if (flyer.isActive()) return
+  // Hover pick first, re-run at the click's own coordinates: the label and the click must never
+  // disagree about what the cursor is over. This subsumes the old named-star proximity loop that
+  // used to live at the bottom of this handler, and additionally makes moons, spacecraft, famous
+  // asteroids, curated galaxies and deep-sky objects clickable — everything the label offers.
+  const pick = pickNearest(hoverCandidates(), ev.clientX, ev.clientY, HOVER_RADIUS_PX)
+  if (pick) {
+    hideHoverLabel()
+    // focusEntry already clears the spacecraft trajectory focus, shows the right card and starts
+    // the right fly-to per kind. Re-focusing what is already focused would just re-fly in place.
+    if (pick.name !== controls.focus.name) focusEntry(pick.entry)
+    return
+  }
   const ndc = new THREE.Vector2(
     (ev.clientX / window.innerWidth) * 2 - 1,
     -(ev.clientY / window.innerHeight) * 2 + 1)
+  // Fallback: a planet whose disc is under the cursor but whose CENTRE is more than the hover
+  // radius away — i.e. you have flown close enough that it fills a good part of the screen.
   raycaster.setFromCamera(ndc, engine.camera)
   const hit = raycaster.intersectObjects(planets.map(p => p.mesh))[0]
   if (hit) {
@@ -545,28 +736,6 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
       showPlanetCard(node.def)
     }
     return
-  }
-  if (!stars) return
-  // project named stars, pick nearest within 14 px
-  let best: { name: string; idx: number; d2: number } | null = null
-  const v = new THREE.Vector3()
-  for (const [name, idx] of Object.entries(stars.names)) {
-    v.set(
-      stars.catalog.positions[idx * 3] * PC_TO_AU - camTruePos.x,
-      stars.catalog.positions[idx * 3 + 1] * PC_TO_AU - camTruePos.y,
-      stars.catalog.positions[idx * 3 + 2] * PC_TO_AU - camTruePos.z,
-    ).project(engine.camera)
-    if (v.z > 1) continue // behind camera
-    const dx = (v.x - ndc.x) * window.innerWidth / 2
-    const dy = (v.y - ndc.y) * window.innerHeight / 2
-    const d2 = dx * dx + dy * dy
-    if (d2 < 14 * 14 && (!best || d2 < best.d2)) best = { name, idx, d2 }
-  }
-  if (best) {
-    spacecraft?.setFocused(null)
-    const exo = exoplanets ? hostForStarName(exoplanets, best.name) : undefined
-    flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
-    showStarCard(stars.catalog, best.idx, best.name, exo)
   }
 })
 
