@@ -26,7 +26,7 @@ import { GALAXIES } from './data/galaxies'
 import { DEEP_SKY } from './data/deepSky'
 import { loadOpenNgc, openNgcFocusable, openNgcMinApproachAu, openNgcDiameterLy, type OpenNgcObject } from './data/openNgc'
 import { setupTimeControls } from './ui/timeControls'
-import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, showAsteroidCard, showSpacecraftCard, hideCard } from './ui/infoCard'
+import { showPlanetCard, showStarCard, showGalaxyCard, showDeepSkyCard, showOpenNgcCard, showAsteroidCard, showSpacecraftCard, showExoplanetHostCard, hideCard } from './ui/infoCard'
 import {
   loadAsteroidField, asteroidFocusable, famousAsteroidEntries, asteroidOrbitSummary,
   ASTEROID_ARRIVE_AU, type AsteroidField,
@@ -38,6 +38,7 @@ import {
 import type { FamousAsteroid } from './data/asteroids'
 import { PC_TO_AU } from './data/units'
 import { dateToJd } from './sim/kepler'
+import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
 
 const engine = createEngine(document.getElementById('app')!)
 const clock = new SimClock(new Date())
@@ -72,6 +73,39 @@ const spacecraftPromise = loadSpacecraftField(engine.scene).catch((err) => {
 })
 let spacecraft: SpacecraftField | null = null
 spacecraftPromise.then((f) => { spacecraft = f })
+
+// Exoplanet hosts (NASA Exoplanet Archive, ~900 KB, see src/data/exoplanets.ts and
+// scripts/build-exoplanets.ts) — loaded lazily on browser idle rather than eagerly like
+// spacecraft.json: nothing on screen needs it before a star card is actually opened. Silent
+// degrade on failure, same as the other lazy catalogs: no banner, cards just lack a "Known
+// planets" line and the three card-only famous-host search entries never appear.
+let exoplanets: ExoplanetCatalog | null = null
+const exoplanetsPromise = new Promise<ExoplanetCatalog | null>((resolve) => {
+  const kick = (): void => {
+    loadExoplanets()
+      .then((c) => { exoplanets = c; resolve(c) })
+      .catch((err) => { console.warn('Exoplanet catalog failed to load:', err); resolve(null) })
+  }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(() => kick())
+  else setTimeout(kick, 0)
+})
+
+// Famous exoplanet hosts too faint for this project's star catalog (see src/data/exoplanets.ts's
+// and src/ui/infoCard.ts's doc comments on the "never synthesize a star point" honesty rule).
+// `archiveHostname` is the NASA Exoplanet Archive's own `hostname` key in public/exoplanets.json;
+// `displayName` is what the search box and card show — they differ only for Kepler-90, whose
+// sole default_flag=1 row in the current Archive snapshot is filed under "KOI-351" (see
+// src/data/exoplanetAliases.ts's doc comment for why). Populated into search entries once both
+// the star catalog (for the "already a real star?" guard below) and the exoplanet catalog have
+// loaded — see the exoplanetsPromise.then block inside loadStarField's callback.
+const FAMOUS_UNMATCHED_HOSTS: { displayName: string; archiveHostname: string }[] = [
+  { displayName: 'TRAPPIST-1', archiveHostname: 'TRAPPIST-1' },
+  { displayName: 'Kepler-90', archiveHostname: 'KOI-351' },
+  { displayName: 'HD 209458', archiveHostname: 'HD 209458' },
+]
+/** display name -> its exoplanet host record, for the three entries above only — populated once
+ *  exoplanets.json loads. Looked up in focusEntry to show a card without a fly-to. */
+const exoplanetHostByKey = new Map<string, ExoplanetHost>()
 
 // Asteroid belt — ~486k MPCORB orbits propagated live (see src/scene/asteroidField.ts). This is
 // the only layer deliberately gated on a rendered frame having already happened: asteroids.bin is
@@ -166,6 +200,28 @@ loadStarField(engine.scene)
       searchEntries.push(...field.defs.map((def) => ({
         name: def.name, kind: 'spacecraft' as const, key: def.id, mag: -26, label: 'spacecraft',
       })))
+    })
+
+    // Famous exoplanet-host card-only entries append the same way once exoplanets.json loads.
+    // kind stays 'star' (per the plan — same search/rank tier as every other named star) but the
+    // key is the display NAME (a string) rather than a catalog index (a number): that's what lets
+    // focusEntry's star branch below tell a card-only entry apart from a real, flyable star
+    // without a dedicated SearchEntry field. mag 8 is an arbitrary faint-ish placeholder (these
+    // aren't catalog stars with a real apparent magnitude) that ranks them below most named
+    // stars on a tied match, appropriate for objects that are "real but not directly visible here".
+    exoplanetsPromise.then((catalog) => {
+      if (!catalog) return
+      const entries: SearchEntry[] = []
+      for (const { displayName, archiveHostname } of FAMOUS_UNMATCHED_HOSTS) {
+        const host = catalog.hosts[archiveHostname]
+        if (!host) continue // the Archive snapshot doesn't have this host this time — skip silently
+        // Never let a card-only entry shadow a real, flyable star of the same name (verified
+        // absent for all three at write time, but stay honest if the catalog ever changes).
+        if (s.names[displayName] !== undefined) continue
+        exoplanetHostByKey.set(displayName, host)
+        entries.push({ name: displayName, kind: 'star' as const, key: displayName, mag: 8, label: 'exoplanet host' })
+      }
+      searchEntries.push(...entries)
     })
   })
   .catch(() => showBanner('Star catalog failed to load — solar system only.'))
@@ -418,9 +474,17 @@ function focusEntry(e: SearchEntry): void {
       showOpenNgcCard(obj)
       focusOpenNgcImagery(obj)
     }
+  } else if (e.kind === 'star' && typeof e.key === 'string') {
+    // Card-only exoplanet-host entry (see FAMOUS_UNMATCHED_HOSTS above) — a string key is what
+    // distinguishes it from a real star's SearchEntry (whose key is always its catalog index, a
+    // number). Deliberately no flyer.start: these stars are below the catalog's magnitude cut,
+    // so there is no point in the scene to fly to.
+    const host = exoplanetHostByKey.get(e.key)
+    if (host) showExoplanetHostCard(e.name, host)
   } else if (stars) {
+    const exo = exoplanets ? hostForStarName(exoplanets, e.name) : undefined
     flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
-    showStarCard(stars.catalog, e.key as number, e.name)
+    showStarCard(stars.catalog, e.key as number, e.name, exo)
   }
   ;(document.getElementById('search') as HTMLInputElement).value = ''
   renderResults([])
@@ -500,8 +564,9 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
   }
   if (best) {
     spacecraft?.setFocused(null)
+    const exo = exoplanets ? hostForStarName(exoplanets, best.name) : undefined
     flyer.start(starFocusable(stars.catalog, best.idx, best.name), 2000)
-    showStarCard(stars.catalog, best.idx, best.name)
+    showStarCard(stars.catalog, best.idx, best.name, exo)
   }
 })
 

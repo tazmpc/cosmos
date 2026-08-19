@@ -14,7 +14,8 @@
     "constellations": "tsx scripts/build-constellations.ts",
     "start": "npm run build && vite preview --port 5200 --strictPort",
     "asteroids": "tsx scripts/build-asteroids.ts",
-    "spacecraft": "tsx scripts/build-spacecraft.ts"
+    "spacecraft": "tsx scripts/build-spacecraft.ts",
+    "exoplanets": "tsx scripts/build-exoplanets.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

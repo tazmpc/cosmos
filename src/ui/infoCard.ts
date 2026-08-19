@@ -5,12 +5,14 @@ import type { DeepSkyDef } from '../data/deepSky'
 import type { OpenNgcObject } from '../data/openNgc'
 import type { FamousAsteroid } from '../data/asteroids'
 import type { SpacecraftDef } from '../scene/spacecraft'
+import type { ExoplanetHost } from '../data/exoplanets'
+import { summarizePlanets } from '../data/exoplanets'
 import { apparentMagnitude } from '../data/starMath'
 import { PC_TO_LY, PC_TO_AU } from '../data/units'
 import { formatDistance } from './format'
 
 export function showPlanetCard(def: PlanetDef): void {
-  render(def.name, def.facts)
+  render(def.name, def.orbitNote ? { ...def.facts, Orbit: def.orbitNote } : def.facts)
 }
 
 export function showGalaxyCard(def: GalaxyDef): void {
@@ -70,18 +72,34 @@ export function showSpacecraftCard(def: SpacecraftDef, distSunAu: number, distEa
   })
 }
 
-export function showStarCard(catalog: StarCatalog, index: number, name: string): void {
+/** `exoHost`, when given, is this star's exoplanet-host record (src/data/exoplanets.ts —
+ *  looked up by the caller via hostForStarName, since that needs the lazily-loaded catalog this
+ *  module doesn't hold a reference to) — adds a "Known planets" fact when present. */
+export function showStarCard(catalog: StarCatalog, index: number, name: string, exoHost?: ExoplanetHost): void {
   const x = catalog.positions[index * 3], y = catalog.positions[index * 3 + 1], z = catalog.positions[index * 3 + 2]
   const distPc = Math.hypot(x, y, z)
   const absMag = catalog.absMag[index]
   const appMag = apparentMagnitude(absMag, distPc)
   const ci = catalog.colorIndex[index]
-  render(name, {
+  const facts: Record<string, string> = {
     'Distance from Sun': `${(distPc * PC_TO_LY).toFixed(1)} ly`,
     'Apparent magnitude': appMag.toFixed(2),
     'Absolute magnitude': absMag.toFixed(2),
     Color: colorClass(ci),
-  })
+  }
+  if (exoHost) facts['Known planets'] = summarizePlanets(exoHost)
+  render(name, facts)
+}
+
+/** Famous exoplanet hosts too faint for this project's star catalog (see the plan's honesty
+ *  rule: never synthesize a star point for one). Card-only — src/main.ts never gives these a
+ *  fly-to. `displayName` may differ from the Archive's own hostname (see src/main.ts's
+ *  FAMOUS_UNMATCHED_HOSTS — e.g. Kepler-90's only default_flag=1 row is filed under "KOI-351"). */
+export function showExoplanetHostCard(displayName: string, host: ExoplanetHost): void {
+  const facts: Record<string, string> = { 'Known planets': summarizePlanets(host) }
+  if (host.distPc != null) facts['Distance from Sun'] = `${(host.distPc * PC_TO_LY).toFixed(1)} ly`
+  facts.Note = "Below this catalog's magnitude cut — not rendered as a star point. Data: NASA Exoplanet Archive."
+  render(displayName, facts)
 }
 
 function colorClass(ci: number): string {

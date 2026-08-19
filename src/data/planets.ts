@@ -10,6 +10,11 @@ export interface PlanetDef {
   periodDays: number      // orbital period, for orbit lines (0 = none)
   parent: BodyId | null   // 'earth' for the Moon, 'jupiter' for the Galilean moons, null for heliocentric bodies
   facts: Record<string, string>
+  /** Rendered as the card's "Orbit" fact (see src/ui/infoCard.ts's showPlanetCard) — how this
+   *  body's position is actually computed, so the honesty note travels with every moon card
+   *  instead of living only in a source comment. Omitted for the Sun and the planets themselves
+   *  (astronomy-engine's own VSOP/DE ephemeris needs no caveat at this project's scale). */
+  orbitNote?: string
 }
 
 const KM = 1 / KM_PER_AU
@@ -36,11 +41,65 @@ export const PLANETS: PlanetDef[] = [
   { id: 'neptune', name: 'Neptune', radiusAu: 24622 * KM, texture: '2k_neptune.jpg', periodDays: 60182, parent: null,
     facts: { Radius: '24,622 km', Year: '165 years', Day: '16.1 hours', Moons: '16' } },
   { id: 'io', name: 'Io', radiusAu: 1821.6 * KM, color: 0xd8c46a, periodDays: 1.769, parent: 'jupiter',
-    facts: { Radius: '1,822 km', 'Orbital period': '1.77 days', Note: 'Most volcanically active body in the solar system' } },
+    facts: { Radius: '1,822 km', 'Orbital period': '1.77 days', Note: 'Most volcanically active body in the solar system' },
+    orbitNote: 'astronomy-engine ephemeris' },
   { id: 'europa', name: 'Europa', radiusAu: 1560.8 * KM, color: 0xcfc4ae, periodDays: 3.551, parent: 'jupiter',
-    facts: { Radius: '1,561 km', 'Orbital period': '3.55 days', Note: 'Subsurface ocean beneath its icy crust — a leading candidate for habitability' } },
+    facts: { Radius: '1,561 km', 'Orbital period': '3.55 days', Note: 'Subsurface ocean beneath its icy crust — a leading candidate for habitability' },
+    orbitNote: 'astronomy-engine ephemeris' },
   { id: 'ganymede', name: 'Ganymede', radiusAu: 2634.1 * KM, color: 0x9a8f7f, periodDays: 7.155, parent: 'jupiter',
-    facts: { Radius: '2,634 km', 'Orbital period': '7.15 days', Note: 'Largest moon in the solar system — bigger than Mercury' } },
+    facts: { Radius: '2,634 km', 'Orbital period': '7.15 days', Note: 'Largest moon in the solar system — bigger than Mercury' },
+    orbitNote: 'astronomy-engine ephemeris' },
   { id: 'callisto', name: 'Callisto', radiusAu: 2410.3 * KM, color: 0x6e665c, periodDays: 16.689, parent: 'jupiter',
-    facts: { Radius: '2,410 km', 'Orbital period': '16.7 days', Note: 'Most heavily cratered object in the solar system' } },
+    facts: { Radius: '2,410 km', 'Orbital period': '16.7 days', Note: 'Most heavily cratered object in the solar system' },
+    orbitNote: 'astronomy-engine ephemeris' },
+
+  // ---- Moons v2: propagated from JPL mean orbital elements (src/data/moonElements.ts +
+  // src/sim/moonOrbit.ts) rather than astronomy-engine, which has no ephemeris for these nine. ----
+  { id: 'titan', name: 'Titan', radiusAu: 2574.7 * KM, color: 0xd9a86c, periodDays: 15.945448, parent: 'saturn',
+    facts: {
+      Radius: '2,575 km', 'Orbital period': '15.9 days',
+      Atmosphere: 'Thick nitrogen/methane haze — the only other body with stable liquid on its surface',
+      Note: 'Lakes and seas of liquid methane and ethane; larger than the planet Mercury',
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'rhea', name: 'Rhea', radiusAu: 763.8 * KM, color: 0xcac7c0, periodDays: 4.517503, parent: 'saturn',
+    facts: { Radius: '764 km', 'Orbital period': '4.52 days', Note: "Second-largest Saturnian moon — icy, heavily cratered" },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'iapetus', name: 'Iapetus', radiusAu: 734.5 * KM, color: 0x9c8a75, periodDays: 79.331002, parent: 'saturn',
+    facts: {
+      Radius: '735 km', 'Orbital period': '79.3 days',
+      Note: 'Two-tone moon — one hemisphere dark as coal tar, the other bright ice — plus a bizarre equatorial ridge',
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'enceladus', name: 'Enceladus', radiusAu: 252.1 * KM, color: 0xf2f5f7, periodDays: 1.370218, parent: 'saturn',
+    facts: {
+      Radius: '252 km', 'Orbital period': '1.37 days',
+      Note: "South-polar geysers vent water ice from a subsurface ocean, feeding Saturn's E ring",
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'triton', name: 'Triton', radiusAu: 1353.4 * KM, color: 0xd8c7bb, periodDays: 5.876994, parent: 'neptune',
+    facts: {
+      Radius: '1,353 km', 'Orbital period': '5.88 days (retrograde)',
+      Note: 'Orbits Neptune backwards — almost certainly a captured Kuiper Belt object',
+      Geology: 'Nitrogen-geyser plumes photographed by Voyager 2 in 1989',
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'titania', name: 'Titania', radiusAu: 788.4 * KM, color: 0xa9a29a, periodDays: 8.705869, parent: 'uranus',
+    facts: {
+      Radius: '788 km', 'Orbital period': '8.71 days',
+      Note: 'Largest and most massive moon of Uranus; canyons and fault scarps hint at past geologic activity',
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'oberon', name: 'Oberon', radiusAu: 761.4 * KM, color: 0x8f8178, periodDays: 13.463237, parent: 'uranus',
+    facts: { Radius: '761 km', 'Orbital period': '13.5 days', Note: "Outermost of Uranus's major moons — heavily cratered, ancient surface" },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'phobos', name: 'Phobos', radiusAu: 11.1 * KM, color: 0x6e6862, periodDays: 0.3187, parent: 'mars',
+    facts: {
+      Radius: '11 km', 'Orbital period': '7.66 hours',
+      Note: 'Spirals inward ~1.8 cm/year — will be torn apart into a ring or crash into Mars in 30-50 million years',
+    },
+    orbitNote: 'modeled from JPL mean elements' },
+  { id: 'deimos', name: 'Deimos', radiusAu: 6.2 * KM, color: 0x7a736b, periodDays: 1.2625, parent: 'mars',
+    facts: { Radius: '6.2 km', 'Orbital period': '30.3 hours', Note: "Smaller and smoother of Mars's two moons — likely a captured asteroid" },
+    orbitNote: 'modeled from JPL mean elements' },
 ]

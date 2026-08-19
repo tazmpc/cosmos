@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { bodyPosition, type BodyId } from './ephemeris'
+import { MOON_ELEMENTS, type MoonV2Id } from '../data/moonElements'
+import { KM_PER_AU } from '../data/units'
 
 const DATE = new Date('2026-07-13T00:00:00Z')
 
@@ -52,8 +54,27 @@ describe('bodyPosition', () => {
     }
   })
 
+  it('places each moons-v2 body within a·(1±e) ± 3% of its parent planet', () => {
+    const PARENT: Record<MoonV2Id, BodyId> = {
+      titan: 'saturn', rhea: 'saturn', iapetus: 'saturn', enceladus: 'saturn',
+      triton: 'neptune',
+      titania: 'uranus', oberon: 'uranus',
+      phobos: 'mars', deimos: 'mars',
+    }
+    for (const [id, el] of Object.entries(MOON_ELEMENTS) as [MoonV2Id, typeof MOON_ELEMENTS[MoonV2Id]][]) {
+      const parentPos = bodyPosition(PARENT[id], DATE)
+      const moonPos = bodyPosition(id, DATE)
+      const d = Math.hypot(moonPos.x - parentPos.x, moonPos.y - parentPos.y, moonPos.z - parentPos.z)
+      const aAu = el.aKm / KM_PER_AU
+      const lo = aAu * (1 - el.e) * 0.97
+      const hi = aAu * (1 + el.e) * 1.03
+      expect(d, `${id} distance ${d} AU, expected [${lo}, ${hi}]`).toBeGreaterThan(lo)
+      expect(d, `${id} distance ${d} AU, expected [${lo}, ${hi}]`).toBeLessThan(hi)
+    }
+  })
+
   it('puts every planet within its perihelion/aphelion bounds', () => {
-    const bounds: Record<Exclude<BodyId, 'sun' | 'moon' | 'io' | 'europa' | 'ganymede' | 'callisto'>, [number, number]> = {
+    const bounds: Record<Exclude<BodyId, 'sun' | 'moon' | 'io' | 'europa' | 'ganymede' | 'callisto' | MoonV2Id>, [number, number]> = {
       mercury: [0.30, 0.47], venus: [0.71, 0.73], earth: [0.97, 1.02],
       mars: [1.38, 1.67], jupiter: [4.95, 5.46], saturn: [9.0, 10.13],
       uranus: [18.2, 20.1], neptune: [29.8, 30.4],
