@@ -15,7 +15,8 @@
     "start": "npm run build && vite preview --port 5200 --strictPort",
     "asteroids": "tsx scripts/build-asteroids.ts",
     "spacecraft": "tsx scripts/build-spacecraft.ts",
-    "exoplanets": "tsx scripts/build-exoplanets.ts"
+    "exoplanets": "tsx scripts/build-exoplanets.ts",
+    "moonphase": "tsx scripts/build-moon-phase.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { moonOffsetEqjAu, laplaceToEqj, type MoonMeanElements } from './moonOrbit'
+import { moonOffsetEqjAu, laplaceToEqj, eqjToLaplace, type MoonMeanElements } from './moonOrbit'
 
 const D2R = Math.PI / 180
 const KM_PER_AU = 149597870.7
@@ -26,6 +26,37 @@ const TRITON: MoonMeanElements = {
 const PHOBOS: MoonMeanElements = {
   aKm: 9375, e: 0.015, iDeg: 1.1, omegaDeg: 216.3, OmegaDeg: 169.2, M0Deg: 189.7,
   periodDays: 0.3187, epochJd: EPOCH_JD, poleRaDeg: 317.7, poleDecDeg: 52.9,
+}
+
+// ---- Phase calibration cross-check (2026-08-18) ---------------------------------------------
+// A later independent Horizons cross-check found that TITAN/TRITON's M0 above (the raw JPL table
+// value) does NOT actually osculate at this epoch — orientation (i, Omega, omega, pole) is
+// correct, but phase is off by tens of degrees for most of this project's 9 moons (see
+// src/sim/moonOrbit.ts's and src/data/moonElements.ts's doc comments, and src/data/moonPhase.json
+// for the full 9-moon report). These two constants below use the CALIBRATED M0 that
+// scripts/build-moon-phase.ts solved for, and are checked against the real JPL Horizons position
+// vector AT THIS EXACT EPOCH — the test the project's original suite lacked, since a bare
+// orientation/period check (the tests above) cannot detect a phase error at all.
+//
+// Query (https://ssd.jpl.nasa.gov/api/horizons.api), response cached at
+// scripts/cache/horizons-moon-titan.txt / horizons-moon-triton.txt:
+//   format=text COMMAND='606'|'801' OBJ_DATA=NO MAKE_EPHEM=YES EPHEM_TYPE=VECTORS
+//   CENTER='500@699' (Saturn) | '500@899' (Neptune) REF_PLANE=FRAME REF_SYSTEM=ICRF VEC_TABLE=1
+//   OUT_UNITS=KM-D START_TIME='JD2451545.0' STOP_TIME='JD2451546.0' STEP_SIZE='1d'
+// Result at JD 2451545.000000000 (A.D. 2000-Jan-01 12:00:00.0000 TDB), parent-centered, ICRF/EQJ:
+const TITAN_PHASE_CALIBRATED: MoonMeanElements = { ...TITAN, M0Deg: 217.6983 }
+const TITAN_HORIZONS_KM = { x: -9.468029384488795e5, y: 8.240982253187533e5, z: 2.708223040694325e4 }
+
+const TRITON_PHASE_CALIBRATED: MoonMeanElements = { ...TRITON, M0Deg: 58.9544 }
+const TRITON_HORIZONS_KM = { x: -2.056964744679369e5, y: 1.000407712666010e4, z: 2.888123684286066e5 }
+
+/** Angle between two vectors, degrees — used to compare a propagated direction against a real
+ *  Horizons vector regardless of the (different) units/magnitudes each is expressed in. */
+function angleBetweenDeg(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
+  const dot = a.x * b.x + a.y * b.y + a.z * b.z
+  const na = Math.hypot(a.x, a.y, a.z), nb = Math.hypot(b.x, b.y, b.z)
+  const cos = Math.min(1, Math.max(-1, dot / (na * nb)))
+  return Math.acos(cos) / D2R
 }
 
 // Neptune's IAU 2015 rotational pole, EQJ degrees (independent of TRITON.poleRaDeg/poleDecDeg
@@ -85,6 +116,36 @@ describe('moonOffsetEqjAu', () => {
   })
 })
 
+// Phase-sensitive: guards against exactly the bug the raw JPL table M0 had (correct orbital
+// plane, wrong position ON that plane). A test using the UNCALIBRATED M0 above would not catch
+// this — it would place Titan somewhere on the right ellipse, at the wrong point on it, and every
+// distance/period/orientation check above would still pass. Only a direct comparison against a
+// real external position vector at a specific time can catch a phase error, which is exactly why
+// this suite lacked one before the Horizons cross-check found the problem.
+describe('moonOffsetEqjAu phase calibration (JPL Horizons cross-check)', () => {
+  it("places Titan within 1° of its real Horizons direction at epoch", () => {
+    const p = moonOffsetEqjAu(TITAN_PHASE_CALIBRATED, EPOCH_JD)
+    const errDeg = angleBetweenDeg(p, TITAN_HORIZONS_KM)
+    expect(errDeg).toBeLessThan(1.0)
+  })
+
+  it("places Triton within 1° of its real Horizons direction at epoch", () => {
+    const p = moonOffsetEqjAu(TRITON_PHASE_CALIBRATED, EPOCH_JD)
+    const errDeg = angleBetweenDeg(p, TRITON_HORIZONS_KM)
+    expect(errDeg).toBeLessThan(1.0)
+  })
+
+  it('would have FAILED with the raw (uncalibrated) table M0 — proves this test is phase-sensitive', () => {
+    // Documents the bug this whole fix is about: propagating with the table's own printed M0
+    // (11.7° for Titan) lands far more than 1° away from the real Horizons direction at epoch.
+    // This test pins that fact down so a future edit can't quietly make the calibrated tests
+    // above pass "by accident" (e.g. from a bug that makes M0 stop mattering at all).
+    const p = moonOffsetEqjAu(TITAN, EPOCH_JD) // TITAN still holds the raw table M0 = 11.7°
+    const errDeg = angleBetweenDeg(p, TITAN_HORIZONS_KM)
+    expect(errDeg).toBeGreaterThan(30)
+  })
+})
+
 describe('laplaceToEqj', () => {
   it('maps a vector along the frame +Z to the pole direction unit vector', () => {
     const ra = 40.589, dec = 83.537 // Saturn's own IAU pole — an arbitrary test choice
@@ -120,5 +181,23 @@ describe('laplaceToEqj', () => {
     expect(cx).toBeCloseTo(Z.x, 12)
     expect(cy).toBeCloseTo(Z.y, 12)
     expect(cz).toBeCloseTo(Z.z, 12)
+  })
+})
+
+describe('eqjToLaplace', () => {
+  it('is the exact inverse of laplaceToEqj for arbitrary vectors and poles', () => {
+    const cases: [number, number, number, number, number][] = [
+      [1, 0, 0, 0, 0],
+      [0.3, -1.7, 2.2, 36.4, 84.0],   // Titan's own pole
+      [-9.47e5, 8.24e5, 2.71e4, 299.8, 43.1], // Triton's own pole, Horizons-scale magnitudes
+      [5, 5, 5, 257.311, -15.175],    // Uranus's IAU pole
+    ]
+    for (const [x, y, z, ra, dec] of cases) {
+      const laplace = eqjToLaplace(x, y, z, ra, dec)
+      const back = laplaceToEqj(laplace.x, laplace.y, laplace.z, ra, dec)
+      expect(back.x).toBeCloseTo(x, 6)
+      expect(back.y).toBeCloseTo(y, 6)
+      expect(back.z).toBeCloseTo(z, 6)
+    }
   })
 })

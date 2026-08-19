@@ -1,0 +1,47 @@
+{
+  "titan": {
+    "tableM0Deg": 11.7,
+    "calibratedM0Deg": 217.6983,
+    "deltaDeg": -154
+  },
+  "rhea": {
+    "tableM0Deg": 31.5,
+    "calibratedM0Deg": 234.211,
+    "deltaDeg": -157.29
+  },
+  "iapetus": {
+    "tableM0Deg": 74.8,
+    "calibratedM0Deg": 219.8778,
+    "deltaDeg": 145.08
+  },
+  "enceladus": {
+    "tableM0Deg": 57,
+    "calibratedM0Deg": 62.4519,
+    "deltaDeg": 5.45
+  },
+  "triton": {
+    "tableM0Deg": 63,
+    "calibratedM0Deg": 58.9544,
+    "deltaDeg": -4.05
+  },
+  "titania": {
+    "tableM0Deg": 68.1,
+    "calibratedM0Deg": 44.4691,
+    "deltaDeg": -23.63
+  },
+  "oberon": {
+    "tableM0Deg": 143.6,
+    "calibratedM0Deg": 338.474,
+    "deltaDeg": -165.13
+  },
+  "phobos": {
+    "tableM0Deg": 189.7,
+    "calibratedM0Deg": 189.66,
+    "deltaDeg": -0.04
+  },
+  "deimos": {
+    "tableM0Deg": 205,
+    "calibratedM0Deg": 205.0952,
+    "deltaDeg": 0.1
+  }
+}

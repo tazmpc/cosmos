@@ -20,6 +20,23 @@
  * warning: "these mean orbital parameters are not intended for ephemeris computation... primarily
  * useful in describing the general shape and orientation of a satellite's orbit." Good enough for
  * "where does Titan orbit Saturn", not for astrometry.
+ *
+ * Discovered discrepancy (2026-08-18, independent JPL Horizons cross-check): the ORIENTATION
+ * this module reconstructs from the table's (i, Omega, omega, pole) is correct — Titan's modeled
+ * orbit-normal direction agreed with Horizons' osculating pole to 0.28°. But the table's M0 does
+ * NOT actually osculate at its own stated epoch for 7 of the 9 moons here — using it verbatim put
+ * the mean-anomaly PHASE off by 50-175° at epoch (Phobos and Titania were the two exceptions,
+ * both under 6° off). Whatever "epoch" JPL's mean-element fit is centered on for those seven, it
+ * is not exactly the 2000-01-01.5 the table prints next to it. Rather than trust the table's M0,
+ * src/data/moonElements.ts's M0Deg values are CALIBRATED: scripts/build-moon-phase.ts queries
+ * JPL Horizons for each moon's real position vector at the table's epoch, transforms it into this
+ * same (Omega, i, omega, pole) frame via eqjToLaplace below (the exact inverse of the forward
+ * transform moonOffsetEqjAu uses), and solves for the M0 that reproduces that direction — a
+ * calibration against ground truth, not a guess. moonOrbit.test.ts's "phase-sensitive" tests
+ * guard this permanently: they hardcode a real Horizons vector and assert moonOffsetEqjAu's
+ * output direction agrees with it to within 1° (a bare orientation test — Titan's original test
+ * suite before this fix — cannot catch a phase bug, since orientation is a property of the
+ * orbital plane and phase is a property of WHERE on that plane the moon sits at a given time).
  */
 
 import { solveKepler } from './kepler'
@@ -86,6 +103,36 @@ export function laplaceToEqj(x: number, y: number, z: number, poleRaDeg: number,
     x: x * xx + y * yx + z * zx,
     y: x * xy + y * yy + z * zy,
     z: x * xz + y * yz + z * zz,
+  }
+}
+
+/**
+ * Inverse of laplaceToEqj: rotates an EQJ vector INTO the frame whose +Z axis points at
+ * (poleRaDeg, poleDecDeg). Since laplaceToEqj is a pure rotation (its basis vectors are
+ * orthonormal), the inverse is just the transpose — projecting the EQJ vector onto each of that
+ * same basis's three axes — rather than a second, independently-derived rotation.
+ *
+ * Used by scripts/build-moon-phase.ts (and its own tests) to go the other way: taking a real JPL
+ * Horizons position vector, which comes back in EQJ, and expressing it in the frame
+ * src/data/moonElements.ts's (Omega, i, omega) are defined in, so a mean anomaly can be read off
+ * it. Not used by moonOffsetEqjAu itself, which only ever needs the forward direction.
+ */
+export function eqjToLaplace(x: number, y: number, z: number, poleRaDeg: number, poleDecDeg: number): Xyz {
+  const ra = poleRaDeg * D2R
+  const dec = poleDecDeg * D2R
+  const cosDec = Math.cos(dec), sinDec = Math.sin(dec)
+  const cosRa = Math.cos(ra), sinRa = Math.sin(ra)
+
+  const zx = cosDec * cosRa, zy = cosDec * sinRa, zz = sinDec
+  const xx = -sinRa, xy = cosRa, xz = 0
+  const yx = zy * xz - zz * xy
+  const yy = zz * xx - zx * xz
+  const yz = zx * xy - zy * xx
+
+  return {
+    x: x * xx + y * xy + z * xz,
+    y: x * yx + y * yy + z * yz,
+    z: x * zx + y * zy + z * zz,
   }
 }
 
