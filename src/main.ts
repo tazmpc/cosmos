@@ -54,8 +54,9 @@ const initialView = decodeViewState(location.hash)
 
 const clock = new SimClock(initialView?.t ? new Date(initialView.t) : new Date())
 // setupTimeControls applies the step it starts on to the clock, so the rate and its label can
-// never disagree — no separate clock.setRate needed here.
-setupTimeControls(clock, initialView?.rate)
+// never disagree — no separate clock.setRate needed here. The handle it returns lets a link
+// arriving LATER (a hash edit in an already-open tab) move the ladder the same way.
+const timeControls = setupTimeControls(clock, initialView?.rate)
 const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 const orbits = createOrbitLines(engine.scene, clock.now())
 
@@ -445,7 +446,11 @@ function exitSky(): void {
   constellations?.setVisible(false)
 }
 
+/** The user-driven mode switch (the 🔭 button and Escape both land here). Distinct from the
+ *  enterSky/exitSky pair, which a deep link also calls: only the user's own switch abandons a
+ *  link that is still resolving — otherwise it would fly them somewhere seconds later. */
 function toggleSky(): void {
+  cancelPendingDeepLink()
   if (mode === 'sky') exitSky(); else enterSky()
 }
 
@@ -461,7 +466,7 @@ window.addEventListener('keydown', (ev) => {
   // deterministic check: if this Escape originated in the search input, let its own handler own
   // it (close the dropdown) and don't also exit sky mode on the same press.
   if (ev.target === searchInput) return
-  exitSky()
+  toggleSky() // mode is 'sky' here, so this exits — via the user-driven path (see toggleSky)
 })
 // -----------------------------------------------------------------------------------------
 
@@ -493,6 +498,10 @@ function deepLinkRefFor(e: SearchEntry): FocusRef | null {
 }
 
 function focusEntry(e: SearchEntry, instant?: InstantView): void {
+  // A hand-picked destination outranks a link that is still hunting for its catalog — without
+  // this, searching for something while a slow link resolves would have the camera stolen back
+  // seconds later. `instant` is set only by the resolver itself, which must not cancel itself.
+  if (!instant) cancelPendingDeepLink()
   if (mode === 'sky') exitSky() // a search fly-to exits sky view first
   const ref = deepLinkRefFor(e)
   /**
@@ -624,10 +633,23 @@ const DEEP_LINK_RETRY_MS = 500
  *  is gated on a rendered frame, then on requestIdleCallback, then a 17 MB fetch and decode. */
 const DEEP_LINK_TIMEOUT_MS = 20_000
 
-/** True while the initial link is still waiting for its catalog. The URL writer stays silent
- *  until it clears — otherwise the 1 Hz writer would overwrite the very URL being resolved with
- *  the default Earth view, and the link would destroy itself before it could be applied. */
+/** True while a link is still waiting for its catalog. The URL writer stays silent until it
+ *  clears — otherwise the 1 Hz writer would overwrite the very URL being resolved with the
+ *  default Earth view, and the link would destroy itself before it could be applied. */
 let deepLinkPending = false
+
+/** Bumped every time a pending resolve is superseded. A resolve can be waiting up to 20 seconds,
+ *  during which the user may search for something else, click a planet, or paste a different
+ *  link — and a stale poll that fired afterwards would yank the camera off whatever they chose.
+ *  Each resolve captures the generation it started in and gives up the moment it goes stale. */
+let deepLinkGeneration = 0
+
+/** Abandons any in-flight deep-link resolve. Called by every path that represents a NEWER
+ *  intention than the pending link: a fresh link, or the user navigating by hand. */
+function cancelPendingDeepLink(): void {
+  deepLinkGeneration++
+  deepLinkPending = false
+}
 
 /**
  * The entry a link points at, if it has loaded yet.
@@ -654,9 +676,12 @@ function findEntryByRef(ref: FocusRef): SearchEntry | undefined {
 
 /** Polls for the linked object until it exists, then places the camera on it instantly. */
 function resolveDeepLinkFocus(ref: FocusRef, view: ViewState): void {
+  cancelPendingDeepLink() // this link supersedes whatever was still waiting
+  const generation = deepLinkGeneration
   deepLinkPending = true
   const deadline = performance.now() + DEEP_LINK_TIMEOUT_MS
   const attempt = (): void => {
+    if (generation !== deepLinkGeneration) return // superseded — say nothing, touch nothing
     const entry = findEntryByRef(ref)
     if (entry) {
       focusEntry(entry, { d: view.d, yaw: view.yaw, pitch: view.pitch })
@@ -683,19 +708,34 @@ function applyOrbitCamera(view: ViewState): void {
   }
 }
 
-if (initialView) {
-  if (initialView.mode === 'sky') {
+/**
+ * Put the app into the state a link describes. The single apply path: startup and a hash edit in
+ * an already-open tab go through exactly this, so the two can never drift apart.
+ *
+ * Order matters. The clock is set before the camera so that whatever the camera lands on is
+ * solved at the shared instant rather than at "now" for one frame first.
+ */
+function applyViewState(view: ViewState): void {
+  if (view.t) clock.setDate(new Date(view.t))
+  // Pause is deliberately NOT part of the URL and is left alone here: a paused clock stays
+  // paused, now sitting at the shared date, which is what someone studying a moment wants.
+  if (view.rate !== undefined) timeControls.setRate(view.rate)
+
+  if (view.mode === 'sky') {
     // Sky view owns the camera outright (position pinned to Earth, orientation and FOV straight
     // from skyControls), so there is nothing to wait for — no catalog is involved in aiming.
-    enterSky()
-    skyControls.setOrientation(initialView.yaw ?? 0, initialView.pitch ?? 0)
-    if (initialView.fov !== undefined) skyControls.fov = initialView.fov
-  } else if (initialView.focus) {
-    resolveDeepLinkFocus(initialView.focus, initialView)
+    cancelPendingDeepLink() // an orbit link still resolving must not surface behind sky view
+    enterSky() // no-op if already in sky mode
+    skyControls.setOrientation(view.yaw ?? 0, view.pitch ?? 0)
+    if (view.fov !== undefined) skyControls.fov = view.fov
   } else {
-    applyOrbitCamera(initialView)
+    exitSky() // no-op if already in orbit mode
+    if (view.focus) resolveDeepLinkFocus(view.focus, view)
+    else { cancelPendingDeepLink(); applyOrbitCamera(view) }
   }
 }
+
+if (initialView) applyViewState(initialView)
 
 /** The view as it stands right now, in the form a URL records. */
 function currentViewState(): ViewState {
@@ -746,6 +786,27 @@ document.getElementById('share-link')!.addEventListener('click', () => {
   const copied = navigator.clipboard?.writeText(url)
   if (copied) copied.then(() => showToast('Link copied'), () => showToast(url, 8000))
   else showToast(url, 8000)
+})
+
+/**
+ * A link pasted into the address bar of an ALREADY-OPEN tab.
+ *
+ * Changing only the fragment is a same-document navigation: nothing reloads, this module never
+ * re-runs, and without this listener the pasted link would sit there for up to a second and then
+ * be silently overwritten by the writer — the app would look broken in the one case a user is
+ * most likely to try by hand.
+ *
+ * replaceState does not fire hashchange, so the writer cannot trigger this. The lastWrittenHash
+ * comparison is belt-and-braces on that, and additionally makes re-entering the identical URL a
+ * no-op instead of a pointless re-apply. An undecodable fragment is ignored outright rather than
+ * yanking the user out of a view they are looking at — that case is only reachable by someone
+ * hand-editing the URL into nonsense, and leaving the app where it is is the kinder answer.
+ */
+window.addEventListener('hashchange', () => {
+  if (location.hash.replace(/^#/, '') === lastWrittenHash) return
+  const view = decodeViewState(location.hash)
+  if (!view) return
+  applyViewState(view)
 })
 // ----------------------------------------------------------------------------------------------
 

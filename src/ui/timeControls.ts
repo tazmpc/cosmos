@@ -19,9 +19,17 @@ export const RATES: number[] = RATE_STEPS.map((s) => s.rate)
 
 const STEPS = RATE_STEPS
 
+/** The handle setupTimeControls returns, for callers that need to move the ladder from outside
+ *  the widget — today that is only the deep-link apply path in main.ts. */
+export interface TimeControlsHandle {
+  /** Jump the ladder to `rate` (must be one of RATES; anything else is ignored), applying it to
+   *  the clock and updating the label so the two can never disagree. */
+  setRate(rate: number): void
+}
+
 /** `initialRate` (a deep link's restored rate — already snapped to a real step by
  *  decodeViewState) starts the ladder at that step so the label matches the clock. */
-export function setupTimeControls(clock: SimClock, initialRate?: number): void {
+export function setupTimeControls(clock: SimClock, initialRate?: number): TimeControlsHandle {
   let stepIdx = initialRate === undefined ? 0 : Math.max(0, STEPS.findIndex((s) => s.rate === initialRate))
   const pauseBtn = document.getElementById('time-pause')!
   const rateEl = document.getElementById('time-rate')!
@@ -43,4 +51,13 @@ export function setupTimeControls(clock: SimClock, initialRate?: number): void {
     dateEl.textContent = clock.now().toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
   }, 100)
   apply()
+
+  return {
+    setRate(rate: number): void {
+      const i = STEPS.findIndex((s) => s.rate === rate)
+      if (i < 0) return // not a step this ladder can show — leave the UI truthful
+      stepIdx = i
+      apply()
+    },
+  }
 }

@@ -54,10 +54,15 @@ malformed field is dropped rather than breaking the load, and `focus` accepts an
 display name as readily as its id (`asteroid:Ceres` works) — the app then rewrites the URL into
 its canonical form. A URL that names nothing recognisable simply opens the default view.
 
+Pasting a link into the address bar of a tab that already has Cosmos open works too — only the
+fragment changes, so nothing reloads, but the view switches to the new one just the same.
+
 Objects living in the big deferred catalogs — the 486k-asteroid belt above all — are not loaded
 when the page starts, so a link to one is retried until its catalog arrives (up to 20 seconds,
-after which it gives up with a console warning and stays at the default view). The URL stops
-updating itself while a link is still resolving, while you are dragging, and during a fly-to.
+after which it gives up with a console warning and stays at the default view). Navigating by
+hand in the meantime — searching, clicking, switching to sky view — abandons the pending link
+rather than yanking the camera away seconds later. The URL stops updating itself while a link
+is still resolving, while you are dragging, and during a fly-to.
 
 ## Sky view
 
