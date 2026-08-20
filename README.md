@@ -23,7 +23,7 @@ constellation lines, CDS/hips2fits DSS2 imagery. See CREDITS.md.
 - **Search** (top) — try Jupiter, Sirius, Vega, Betelgeuse, Andromeda, the Coma Cluster —
   and fly there
 - **Click** a planet or bright star to fly to it; a card shows its real data
-- **Time controls** (bottom right): pause, step the rate up to 1 year/second, reset to now
+- **Time controls** (bottom right): pause, step the rate up to **10,000 years/second**, reset to now
 - **🔗** (bottom right): copy a link to exactly what you are looking at — see "Sharing a view"
 
 ## Sharing a view
@@ -74,7 +74,8 @@ pins to Earth and looks up, the way the sky actually looks from the ground.
 - Constellation lines overlay the real star positions — find Orion's hourglass or the Big
   Dipper the same way you would outside at night
 - Time keeps running in sky view, so planets visibly drift along the ecliptic if you leave the
-  clock running
+  clock running — and at the deep-time rates the **stars** drift too, taking the constellations
+  apart with them (see "Deep time")
 - Curated deep-sky objects (Orion Nebula, Pleiades, and others — see "Real imagery" below) sit
   at their real sky positions too; fly to one from search and its glow resolves into a real
   telescope photograph as you approach
@@ -222,10 +223,50 @@ station-keeping burns aren't planned that far ahead. Past that date its position
 at the last predicted point while Earth keeps orbiting around it; that's a known
 simplification, not a real trajectory beyond the ephemeris horizon.
 
+## Deep time
+
+Wind the clock to 100 yr/s or 10 kyr/s in sky view and the constellations come apart. That is
+not an effect: every star in `stars.bin` carries its own **measured proper motion**, and the
+point shader puts it where that measurement says it should be.
+
+- **The data.** Gaia DR3 `pmra`/`pmdec` for the 727k Gaia stars, HYG's own `pmra`/`pmdec` for
+  the ~700 named ones. Both catalogs quote μ_α\* — the RA proper motion already multiplied by
+  cos δ — so it maps straight onto the local east direction with no correction. (HYG's README
+  doesn't say which convention it uses; the data does. Reconstructing HYG's own `vx,vy,vz`
+  columns from its `pmra`/`pmdec` over the 36,553 catalog stars at |dec| > 45° gives a mean
+  relative error of 2.7e-4 treating `pmra` as μ_α\*, versus 0.32 if a cos δ is applied.)
+  Each is converted at build time to a cartesian velocity in parsecs per year and stored in
+  the catalog as format **CSMS v2**; every other `.bin` stays v1 and simply doesn't move.
+- **Linear extrapolation, and nothing more.** A star's position is `p₀ + v·t`, straight-line,
+  from the J2016.0 Gaia epoch. There is no galactic rotation in it, no gravity, no encounter
+  between stars — over 200,000 years the real Sun swings about 1/5 of the way around the
+  galaxy and every star's velocity turns with it. The tangential term is also the only one:
+  the extract carries no radial velocities, so stars drift **across** the sky correctly but
+  their distances stay fixed. This is a projection of a measurement, not a simulation.
+- **Clamped at ±200,000 years.** Past that the app stops moving the stars at all rather than
+  drawing a fit that far outside its own validity. Set a date beyond the clamp and the sky
+  simply freezes at the 200-kyr configuration while the planets keep going — the honest
+  failure mode, and a visible one.
+- **Constellation figures are epoch-locked.** They are a J2000 human artifact: lines drawn
+  between stars that look adjacent *now*. Once proper motion has moved the stars the lines no
+  longer land on them, so beyond **±5,000 years from J2000** they are hidden, and the sky-view
+  hint says why. There is nothing to redraw them from — no catalog exists of the figures
+  someone would have invented in 12,000 AD.
+- **The planets degrade too, and faster.** astronomy-engine states ±1 arcminute, from a
+  truncated VSOP87 checked against NOVAS/DE405 — a series designed to hold over a few thousand
+  years either side of J2000, not tens of thousands. The asteroid belt is worse still: those
+  are unperturbed two-body orbits from osculating elements (see "The asteroid belt"), which
+  are only meaningful near their own epoch. At 10 kyr/s the solar system is showing you the
+  model's continuation, not a prediction.
+- **What to watch.** The Big Dipper: five of its seven stars share a common motion (the Ursa
+  Major moving group) while Dubhe and Alkaid drift the other way, so the bowl and handle
+  visibly shear apart. Barnard's Star (10.4″/yr, the largest proper motion known) crosses
+  the field fast enough to follow by eye.
+
 ## Rebuild the star catalog
 
     npm run catalog            # HYG only (~109k stars, fast, no download needed if cache present)
-    npm run catalog -- --gaia  # Gaia DR3 (~728k stars; needs scripts/cache/gaia.csv + gaia_teff.csv from ESA TAP — see scripts/build-catalog.ts)
+    npm run catalog -- --gaia  # Gaia DR3 (~728k stars; needs scripts/cache/gaia.csv + gaia_teff.csv + gaia_pm.csv from ESA TAP — see scripts/build-catalog.ts)
 
 `--gaia` also needs the dust cache for reddening, so run `npm run dustmap` first.
 
@@ -310,4 +351,8 @@ the same way, caching to `scripts/cache/exoplanets.csv`.
 - Constellation lines are drawn as straight 3D chords between catalog line-segment endpoints,
   not great-circle-subdivided arcs — accurate enough at the rendered scale, but a very long
   segment would show as a visibly straight line rather than curving with the sphere.
+- Stellar proper motion is a straight-line extrapolation of a measured tangential velocity,
+  clamped to ±200,000 years, with no galactic orbits and no radial component; constellation
+  figures are hidden beyond ±5,000 years from J2000, and planetary ephemerides degrade well
+  before either limit. See "Deep time".
 - Design docs: docs/superpowers/specs/ (approved spec) and docs/superpowers/plans/ (implementation plan).

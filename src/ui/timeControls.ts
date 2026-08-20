@@ -12,6 +12,11 @@ export const RATE_STEPS: RateStep[] = [
   { rate: 86400 * 7, label: '1 wk/s' },
   { rate: 86400 * 30, label: '1 mo/s' },
   { rate: 86400 * 365.25, label: '1 yr/s' },
+  // Deep-time steps. Proper motion is ~10 arcsec/yr at the very fastest, so a year per second
+  // shows nothing at all; 100 yr/s makes the nearby stars crawl and 10 kyr/s takes the whole sky
+  // apart in seconds — that is the rate the constellations visibly deform at.
+  { rate: 86400 * 365.25 * 100, label: '100 yr/s' },
+  { rate: 86400 * 365.25 * 10000, label: '10 kyr/s' },
 ]
 
 /** Just the rate values, in ladder order. */

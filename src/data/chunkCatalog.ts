@@ -53,10 +53,16 @@ const MAX_DEPTH = 32
  *   since a cell is split until it is under the cap, not until a chunk count is hit.
  */
 export function chunkCatalog(catalog: StarCatalog, targetChunks: number): ChunkedCatalog {
-  const { count, positions, absMag, colorIndex } = catalog
+  const { count, positions, absMag, colorIndex, velocities } = catalog
   if (count === 0) {
     return {
-      catalog: { count: 0, positions: new Float32Array(0), absMag: new Float32Array(0), colorIndex: new Float32Array(0) },
+      catalog: {
+        count: 0,
+        positions: new Float32Array(0),
+        absMag: new Float32Array(0),
+        colorIndex: new Float32Array(0),
+        velocities: catalog.velocities !== undefined ? new Float32Array(0) : undefined,
+      },
       chunks: [],
       newIndexOf: new Uint32Array(0),
     }
@@ -115,6 +121,9 @@ export function chunkCatalog(catalog: StarCatalog, targetChunks: number): Chunke
   const outPos = new Float32Array(count * 3)
   const outMag = new Float32Array(count)
   const outCol = new Float32Array(count)
+  // Velocities move with their star: they are a per-row property, so the reorder must permute
+  // them exactly like positions or every star would inherit a stranger's proper motion.
+  const outVel = velocities !== undefined ? new Float32Array(count * 3) : undefined
   const newIndexOf = new Uint32Array(count)
   for (let j = 0; j < count; j++) {
     const i = order[j]
@@ -124,6 +133,11 @@ export function chunkCatalog(catalog: StarCatalog, targetChunks: number): Chunke
     outPos[j * 3 + 2] = positions[i * 3 + 2]
     outMag[j] = absMag[i]
     outCol[j] = colorIndex[i]
+    if (outVel !== undefined) {
+      outVel[j * 3] = velocities![i * 3]
+      outVel[j * 3 + 1] = velocities![i * 3 + 1]
+      outVel[j * 3 + 2] = velocities![i * 3 + 2]
+    }
   }
 
   // --- exact bounding sphere per chunk -------------------------------------------------------
@@ -151,7 +165,7 @@ export function chunkCatalog(catalog: StarCatalog, targetChunks: number): Chunke
   }
 
   return {
-    catalog: { count, positions: outPos, absMag: outMag, colorIndex: outCol },
+    catalog: { count, positions: outPos, absMag: outMag, colorIndex: outCol, velocities: outVel },
     chunks,
     newIndexOf,
   }

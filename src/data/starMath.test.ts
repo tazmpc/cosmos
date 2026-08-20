@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude, eqjToGalactic, polyfit, polyval } from './starMath'
+import { raDecDistToXyz, absoluteMagnitude, apparentMagnitude, eqjToGalactic, polyfit, polyval, tangentialVelocityPcYr } from './starMath'
 
 describe('polyval', () => {
   it('evaluates ascending-order coefficients', () => {
@@ -94,5 +94,79 @@ describe('apparentMagnitude', () => {
     const distPc = 2.637
     const appMag = apparentMagnitude(absMag, distPc)
     expect(absoluteMagnitude(appMag, distPc)).toBeCloseTo(absMag, 6)
+  })
+})
+
+describe('tangentialVelocityPcYr', () => {
+  // Local sky unit vectors at (ra, dec) in EQJ, repeated here independently of the implementation
+  // so the direction assertions below are not checking the code against itself.
+  const east = (raDeg: number): [number, number, number] => {
+    const a = (raDeg * Math.PI) / 180
+    return [-Math.sin(a), Math.cos(a), 0]
+  }
+  const north = (raDeg: number, decDeg: number): [number, number, number] => {
+    const a = (raDeg * Math.PI) / 180
+    const d = (decDeg * Math.PI) / 180
+    return [-Math.sin(d) * Math.cos(a), -Math.sin(d) * Math.sin(a), Math.cos(d)]
+  }
+  const dot = (u: number[], v: number[]) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
+  const norm = (v: number[]) => Math.hypot(v[0], v[1], v[2])
+
+  // Barnard's Star: the largest proper motion of any known star, 10.39"/yr at 1.83 pc.
+  // mu_total = hypot(802.8, 10362.5) = 10393.5 mas/yr = 10.3935"/yr
+  // v = 10.3935 * 4.848136811e-6 rad/yr * 1.83 pc = 9.221e-5 pc/yr
+  const BARNARD = { ra: 269.45, dec: 4.66, dist: 1.83, pmra: -802.8, pmdec: 10362.5 }
+
+  it("matches Barnard's Star's measured tangential speed", () => {
+    const v = tangentialVelocityPcYr(BARNARD.ra, BARNARD.dec, BARNARD.dist, BARNARD.pmra, BARNARD.pmdec)
+    expect(norm(v)).toBeCloseTo(9.221e-5, 8)
+  })
+
+  it("points Barnard's Star almost due celestial north", () => {
+    const v = tangentialVelocityPcYr(BARNARD.ra, BARNARD.dec, BARNARD.dist, BARNARD.pmra, BARNARD.pmdec)
+    expect(dot(v, north(BARNARD.ra, BARNARD.dec)) / norm(v)).toBeGreaterThan(0.99)
+  })
+
+  it('is purely tangential — no radial component', () => {
+    const v = tangentialVelocityPcYr(BARNARD.ra, BARNARD.dec, BARNARD.dist, BARNARD.pmra, BARNARD.pmdec)
+    const [x, y, z] = raDecDistToXyz(BARNARD.ra / 15, BARNARD.dec, 1)
+    expect(Math.abs(dot(v, [x, y, z]))).toBeLessThan(1e-18)
+  })
+
+  it('maps a pure-east proper motion onto the east unit vector', () => {
+    // 1000 mas/yr = 1"/yr of mu_alpha* at 10 pc -> 1 * 4.848136811e-6 * 10 = 4.848137e-5 pc/yr
+    const v = tangentialVelocityPcYr(30, 0, 10, 1000, 0)
+    const e = east(30)
+    expect(norm(v)).toBeCloseTo(4.848136811e-5, 10)
+    expect(dot(v, e) / norm(v)).toBeCloseTo(1, 10)
+  })
+
+  it('maps a pure-north proper motion onto the north unit vector', () => {
+    const v = tangentialVelocityPcYr(200, -35, 4, 0, 500)
+    const n = north(200, -35)
+    expect(dot(v, n) / norm(v)).toBeCloseTo(1, 10)
+    expect(norm(v)).toBeCloseTo(0.5 * 4.848136811e-6 * 4, 12)
+  })
+
+  it('treats pmra as mu_alpha* — no extra cos(dec) is applied near the pole', () => {
+    // Polaris-like: at dec 89.264 a raw-mu_alpha reading would be ~77x larger than mu_alpha*.
+    // The speed must depend only on the quoted numbers, not on how close to the pole the star is.
+    const nearPole = tangentialVelocityPcYr(2.53 * 15, 89.264, 132.6, 44.22, -11.74)
+    const onEquator = tangentialVelocityPcYr(2.53 * 15, 0, 132.6, 44.22, -11.74)
+    expect(norm(nearPole)).toBeCloseTo(norm(onEquator), 12)
+  })
+
+  it('returns a zero vector for zero proper motion', () => {
+    // `===` rather than toEqual: the components come out as signed zeros (-0 for a term whose
+    // trig factor is negative), which is the same number but a different value to toEqual.
+    const v = tangentialVelocityPcYr(123.4, -56.7, 42, 0, 0)
+    expect(v.length).toBe(3)
+    expect(v.every((c) => c === 0)).toBe(true)
+  })
+
+  it('scales linearly with distance', () => {
+    const near = tangentialVelocityPcYr(100, 20, 5, 300, -200)
+    const far = tangentialVelocityPcYr(100, 20, 50, 300, -200)
+    expect(norm(far)).toBeCloseTo(10 * norm(near), 12)
   })
 })

@@ -32,8 +32,10 @@ const VERT = /* glsl */ `
   uniform float uMaxSize;
   uniform float uPixelRatio;
   uniform float uLayerAlpha;
+  uniform float uYearsFromEpoch; // sim time minus the catalog's astrometric epoch, in years
   attribute float absMag;
   attribute vec3 starColor;
+  attribute vec3 starVel;    // proper motion, catalog position units per YEAR (zero for v1 catalogs)
   varying vec3 vColor;
   varying float vAlpha;
 
@@ -41,13 +43,18 @@ const VERT = /* glsl */ `
   #include <logdepthbuf_pars_vertex>
 
   void main() {
-    vec3 relAu = (position - uCamPc) * uUnitToAu;
+    // Proper motion FIRST, then the camera-relative subtraction: the star's real position at this
+    // sim date is what everything downstream (screen position, distance, apparent magnitude) is
+    // supposed to be measured from. Linear extrapolation of a measured velocity — see the README's
+    // "Deep time" section for what that does and does not model.
+    vec3 pos = position + starVel * uYearsFromEpoch;
+    vec3 relAu = (pos - uCamPc) * uUnitToAu;
     vec4 mv = modelViewMatrix * vec4(relAu, 1.0);
     gl_Position = projectionMatrix * mv;
 
     #include <logdepthbuf_vertex>
 
-    float distUnits = max(length(position - uCamPc), 1e-6);
+    float distUnits = max(length(pos - uCamPc), 1e-6);
     float appMag = absMag + 5.0 * (log(distUnits * uUnitToPc) / 2.302585 - 1.0);
     gl_PointSize = clamp(uScale * pow(10.0, -0.2 * appMag), uMinSize, uMaxSize) * uPixelRatio;
     vAlpha = clamp(pow(10.0, -0.4 * (appMag - uFaintMag)), 0.0, 1.0);
@@ -85,7 +92,27 @@ export function buildPointGeometry(catalog: StarCatalog): THREE.BufferGeometry {
   geo.setAttribute('position', new THREE.BufferAttribute(catalog.positions, 3))
   geo.setAttribute('absMag', new THREE.BufferAttribute(catalog.absMag, 1))
   geo.setAttribute('starColor', new THREE.BufferAttribute(colors, 3))
+  // A v1 catalog (galaxies, both Milky Way layers) has no measured proper motions, so it gets a
+  // zero-filled velocity attribute rather than a second shader variant: uYearsFromEpoch then
+  // multiplies zero and those layers sit exactly where they always did, with no per-layer branch
+  // and no shader permutation to keep in sync.
+  geo.setAttribute('starVel',
+    new THREE.BufferAttribute(catalog.velocities ?? new Float32Array(catalog.count * 3), 3))
   return geo
+}
+
+/** Largest |v| in a catalog, in catalog position units per year — 0 when nothing moves. The
+ *  per-chunk cull spheres are computed from EPOCH positions, so a chunk's true extent at sim year
+ *  t is its epoch sphere grown by |t| * this. Computed once at load; exact, and one number. */
+export function maxSpeed(catalog: StarCatalog): number {
+  const v = catalog.velocities
+  if (v === undefined) return 0
+  let max2 = 0
+  for (let i = 0; i < v.length; i += 3) {
+    const d2 = v[i] * v[i] + v[i + 1] * v[i + 1] + v[i + 2] * v[i + 2]
+    if (d2 > max2) max2 = d2
+  }
+  return Math.sqrt(max2)
 }
 
 export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
@@ -103,6 +130,7 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
       uMaxSize: { value: cfg.maxSize },
       uPixelRatio: { value: getRenderPixelRatio() },
       uLayerAlpha: { value: 1.0 },
+      uYearsFromEpoch: { value: 0 },
     },
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -140,10 +168,15 @@ export interface PointLayer {
   /** newIndexOf[onDiskIndex] = index in `catalog`. Any sidecar that indexes the on-disk catalog
    *  (e.g. starnames.json) MUST be remapped through this — see loadStarField. */
   newIndexOf: Uint32Array
+  /** Largest |v| in this layer's catalog, in catalog position units per year (0 for a v1
+   *  catalog). Exposed because the cull-sphere inflation below is derived from it. */
+  maxSpeed: number
   /** Call each frame with the camera's true heliocentric position in AU, this layer's crossfade
-   *  alpha (0..1), and (optionally) the camera — passing the camera enables per-chunk frustum
-   *  culling and requires the camera's matrixWorldInverse to already reflect this frame. */
-  update(camTruePosAu: THREE.Vector3, layerAlpha?: number, camera?: THREE.Camera): void
+   *  alpha (0..1), (optionally) the camera — passing the camera enables per-chunk frustum culling
+   *  and requires the camera's matrixWorldInverse to already reflect this frame — and the sim
+   *  time in years from the catalog's astrometric epoch (drives proper motion; a layer whose
+   *  catalog has no velocities is unaffected by any value). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha?: number, camera?: THREE.Camera, yearsFromEpoch?: number): void
 }
 
 // Per-frame scratch — shared across all layers (culling is strictly synchronous), so per-frame
@@ -205,6 +238,7 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
   const posAttr = geo.getAttribute('position')
   const magAttr = geo.getAttribute('absMag')
   const colAttr = geo.getAttribute('starColor')
+  const velAttr = geo.getAttribute('starVel')
   const chunkPoints = chunks.map((c) => {
     // A drawRange is per-geometry, so each chunk needs its own BufferGeometry — but they all
     // reference the SAME BufferAttribute objects, so three uploads each attribute exactly once
@@ -213,6 +247,7 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
     g.setAttribute('position', posAttr)
     g.setAttribute('absMag', magAttr)
     g.setAttribute('starColor', colAttr)
+    g.setAttribute('starVel', velAttr)
     g.setDrawRange(c.start, c.count)
     const p = new THREE.Points(g, mat)
     p.frustumCulled = false // shader-space positions; three's culling would use wrong bounds — we cull manually below
@@ -244,9 +279,11 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
     for (const p of chunkPoints) p.visible = false
   }
 
+  const vMax = maxSpeed(catalog)
+
   const layer: PointLayer = {
-    group, catalog, chunks, newIndexOf,
-    update(camTruePosAu, layerAlpha = 1, camera) {
+    group, catalog, chunks, newIndexOf, maxSpeed: vMax,
+    update(camTruePosAu, layerAlpha = 1, camera, yearsFromEpoch = 0) {
       scratchCamPos.set(camTruePosAu.x / unitToAu, camTruePosAu.y / unitToAu, camTruePosAu.z / unitToAu)
       ;(mat.uniforms.uCamPc.value as THREE.Vector3).copy(scratchCamPos)
       mat.uniforms.uLayerAlpha.value = layerAlpha
@@ -254,6 +291,7 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
       // drag to a different-DPI display) can change the applied ratio at any time — see
       // renderer.ts's getRenderPixelRatio doc comment.
       mat.uniforms.uPixelRatio.value = getRenderPixelRatio()
+      mat.uniforms.uYearsFromEpoch.value = yearsFromEpoch
       // Below-threshold layers cost full vertex work every frame even at alpha 0 (no per-point
       // gating in the shader) — three.js skips the draw call entirely when the group is invisible,
       // so this is the actual perf win, not just a visual nicety.
@@ -272,6 +310,11 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
       // consumes (the GL camera itself always sits at the origin).
       scratchFrustum.setFromProjectionMatrix(
         scratchViewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse))
+      // Chunk bounds were measured at the catalog's EPOCH, but every point in the chunk has since
+      // drifted by up to |years| * vMax. Growing each sphere by exactly that keeps the test
+      // conservative at any sim date — no chunk can hold a point outside its own sphere — for one
+      // multiply per frame. vMax is 0 for every v1 layer, so they pay nothing.
+      const motionSlop = Math.abs(yearsFromEpoch) * vMax * unitToAu
       let nVisible = 0
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i]
@@ -281,6 +324,7 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
           (c.center[2] - scratchCamPos.z) * unitToAu)
         scratchSphere.radius = c.radius * unitToAu * CULL_RADIUS_SCALE
           + scratchSphere.center.length() * CULL_DISTANCE_SLOP
+          + motionSlop
         const vis = scratchFrustum.intersectsSphere(scratchSphere)
         chunkPoints[i].visible = vis
         if (vis) nVisible++

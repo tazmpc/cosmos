@@ -76,3 +76,65 @@ export function absoluteMagnitude(apparentMag: number, distPc: number): number {
 export function apparentMagnitude(absMag: number, distPc: number): number {
   return absMag + 5 * (Math.log10(distPc) - 1)
 }
+
+/** Milliarcseconds → radians. (1 mas = 1e-3", 1" = pi/(180*3600) rad.) Exported because catalogs
+ *  quote proper motions in either unit — HYG carries both — and the conversion has to agree. */
+export const MAS_TO_RAD = Math.PI / (180 * 3600 * 1000)
+
+/**
+ * Tangential (across-the-sky) velocity of a star, in PARSECS PER YEAR, as an EQJ cartesian
+ * vector on the same axes as raDecDistToXyz.
+ *
+ * A proper motion is an ANGULAR rate; multiplying it by the distance turns it into a linear one:
+ *
+ *     v = d * (mu_alpha* * e_east + mu_delta * e_north)
+ *
+ * where the local sky basis at (alpha, delta) is
+ *
+ *     e_east  = (-sin a,            cos a,             0     )
+ *     e_north = (-sin d * cos a,   -sin d * sin a,     cos d )
+ *
+ * Both are unit vectors and both are perpendicular to the line of sight, so the result is purely
+ * tangential — there is no radial term here even for stars with a known radial velocity. That is
+ * deliberate: the Gaia extract this catalog is built from carries pmra/pmdec but no radial
+ * velocity (Gaia measures RV for only a subset), so including RV for the few stars that have it
+ * would make the catalog inconsistent with itself. Over the +/-200 kyr the app extrapolates, the
+ * missing radial term changes a star's DISTANCE, which the eye reads as brightness, not as the
+ * across-the-sky drift that the constellations are made of.
+ *
+ * CONVENTION: `pmraMasYr` is mu_alpha* — the proper motion in right ascension ALREADY multiplied
+ * by cos(delta), so that it is a true angular rate on the sky rather than a coordinate rate. This
+ * is what both of this catalog's sources publish:
+ *   - Gaia DR3's `pmra` column is defined as mu_alpha* (gaiadr3.gaia_source documentation).
+ *   - HYG's README says only "proper motion in right ascension, in milliarcseconds per year", but
+ *     the data settles it: HYG gives Polaris (dec +89.264, cos d = 0.0128) pmra = 44.22 mas/yr,
+ *     which is its mu_alpha*; the raw d(alpha)/dt would be ~3450 mas/yr. Kapteyn's Star agrees
+ *     (HYG 6506.05 vs mu_alpha* 6500, raw ~9200). So no cos(delta) is applied here for either
+ *     source — see the near-pole test in starMath.test.ts, which locks this in.
+ *
+ * @param raDeg   right ascension in DEGREES (note: raDecDistToXyz takes hours)
+ * @param decDeg  declination in degrees
+ * @param distPc  distance in parsecs
+ * @param pmraMasYr   mu_alpha* in mas/yr
+ * @param pmdecMasYr  mu_delta in mas/yr
+ */
+export function tangentialVelocityPcYr(
+  raDeg: number,
+  decDeg: number,
+  distPc: number,
+  pmraMasYr: number,
+  pmdecMasYr: number,
+): [number, number, number] {
+  const a = (raDeg * Math.PI) / 180
+  const d = (decDeg * Math.PI) / 180
+  const sa = Math.sin(a), ca = Math.cos(a)
+  const sd = Math.sin(d), cd = Math.cos(d)
+  // rad/yr, then × distance to get pc/yr
+  const muE = pmraMasYr * MAS_TO_RAD * distPc
+  const muN = pmdecMasYr * MAS_TO_RAD * distPc
+  return [
+    muE * -sa + muN * -sd * ca,
+    muE * ca + muN * -sd * sa,
+    muN * cd,
+  ]
+}

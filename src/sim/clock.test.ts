@@ -32,3 +32,44 @@ describe('SimClock', () => {
     expect(c.now().getTime()).toBe(target.getTime())
   })
 })
+
+describe('SimClock — the representable-time rail', () => {
+  // At 10,000 yr/s the clock gains 3.16e14 ms of sim time per real second, so it reaches
+  // JavaScript's maximum representable Date (8.64e15 ms, September 275760 AD) in 27 seconds of
+  // wall time. One millisecond past that, `new Date(ms)` is an Invalid Date and every
+  // `.toISOString()` in the app — the date readout, the deep-link writer — throws RangeError
+  // mid-frame. The clock therefore stops at the rail instead of running off it.
+  const MAX = 8.64e15
+
+  it('never advances past the maximum representable date', () => {
+    const c = new SimClock(new Date(MAX - 1000))
+    c.setRate(1e12)
+    c.tick(0)
+    c.tick(1000)
+    expect(c.now().getTime()).toBe(MAX)
+    expect(() => c.now().toISOString()).not.toThrow()
+  })
+
+  it('never retreats past the minimum representable date', () => {
+    const c = new SimClock(new Date(-MAX + 1000))
+    c.setRate(1e12)
+    c.tick(0)
+    c.tick(-1000) // a backwards real-time step drives sim time backwards at this rate
+    expect(c.now().getTime()).toBe(-MAX)
+    expect(() => c.now().toISOString()).not.toThrow()
+  })
+
+  it('clamps a setDate beyond the rail rather than storing an unrepresentable value', () => {
+    const c = new SimClock(new Date(0))
+    c.setDate(new Date(MAX))
+    expect(c.now().getTime()).toBe(MAX)
+  })
+
+  it('leaves an ordinary date completely alone', () => {
+    const t = Date.UTC(2026, 7, 19, 12)
+    const c = new SimClock(new Date(t))
+    c.tick(0)
+    c.tick(1000)
+    expect(c.now().getTime()).toBe(t + 1000)
+  })
+})

@@ -99,7 +99,9 @@ const VERT = /* glsl */ `
   uniform float uPixelSize; // framebuffer px for a halo of size factor 1.0
   uniform float uMaxPixels;
   uniform float uLayerAlpha;
+  uniform float uYearsFromEpoch; // sim time minus the catalog's astrometric epoch, in years
   attribute vec3 haloColor;
+  attribute vec3 starVel;   // proper motion, parsecs per year — keeps a halo on its own star
   attribute float haloOpacity;
   attribute float haloSize;
   varying vec3 vColor;
@@ -109,7 +111,9 @@ const VERT = /* glsl */ `
   #include <logdepthbuf_pars_vertex>
 
   void main() {
-    vec3 relAu = (position - uCamPc) * uUnitToAu;
+    // Same proper-motion step as the star shader, and it has to be the same or a halo would stay
+    // parked at its star's epoch position while the star itself drifted away from it.
+    vec3 relAu = (position + starVel * uYearsFromEpoch - uCamPc) * uUnitToAu;
     vec4 mv = modelViewMatrix * vec4(relAu, 1.0);
     gl_Position = projectionMatrix * mv;
 
@@ -143,9 +147,12 @@ export interface BrightStarHalos {
   count: number
   /** Call each frame with the camera's true heliocentric position (AU), the star layer's
    *  crossfade alpha (halos ride `la.stars`), the camera (for its current vertical FOV — sky view
-   *  zooms it) and the framebuffer height in px (for the fixed-angular-size -> gl_PointSize
-   *  conversion; it changes with window size AND with the dynamic-resolution governor). */
-  update(camTruePosAu: THREE.Vector3, layerAlpha: number, camera: THREE.PerspectiveCamera, drawingBufferHeight: number): void
+   *  zooms it), the framebuffer height in px (for the fixed-angular-size -> gl_PointSize
+   *  conversion; it changes with window size AND with the dynamic-resolution governor), and the
+   *  sim time in years from the catalog's astrometric epoch (so a halo rides its star's proper
+   *  motion). */
+  update(camTruePosAu: THREE.Vector3, layerAlpha: number, camera: THREE.PerspectiveCamera,
+         drawingBufferHeight: number, yearsFromEpoch?: number): void
 }
 
 /** Adds glare halos — a soft core plus four thin diffraction spikes — to the brightest stars as
@@ -160,6 +167,7 @@ export function createBrightStarHalos(scene: THREE.Scene, catalog: StarCatalog):
   const picks = pickBrightStars(catalog)
 
   const positions = new Float32Array(picks.length * 3)
+  const velocities = new Float32Array(picks.length * 3)
   const colors = new Float32Array(picks.length * 3)
   const opacities = new Float32Array(picks.length)
   const sizes = new Float32Array(picks.length)
@@ -168,6 +176,11 @@ export function createBrightStarHalos(scene: THREE.Scene, catalog: StarCatalog):
     positions[n * 3] = catalog.positions[p.index * 3]
     positions[n * 3 + 1] = catalog.positions[p.index * 3 + 1]
     positions[n * 3 + 2] = catalog.positions[p.index * 3 + 2]
+    if (catalog.velocities !== undefined) {
+      velocities[n * 3] = catalog.velocities[p.index * 3]
+      velocities[n * 3 + 1] = catalog.velocities[p.index * 3 + 1]
+      velocities[n * 3 + 2] = catalog.velocities[p.index * 3 + 2]
+    }
     const [r, g, b] = colorIndexToRgb(catalog.colorIndex[p.index])
     colors[n * 3] = r; colors[n * 3 + 1] = g; colors[n * 3 + 2] = b
     const op = haloOpacity(p.appMag)
@@ -177,6 +190,7 @@ export function createBrightStarHalos(scene: THREE.Scene, catalog: StarCatalog):
 
   const geo = new THREE.BufferGeometry()
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geo.setAttribute('starVel', new THREE.BufferAttribute(velocities, 3))
   geo.setAttribute('haloColor', new THREE.BufferAttribute(colors, 3))
   geo.setAttribute('haloOpacity', new THREE.BufferAttribute(opacities, 1))
   geo.setAttribute('haloSize', new THREE.BufferAttribute(sizes, 1))
@@ -190,6 +204,7 @@ export function createBrightStarHalos(scene: THREE.Scene, catalog: StarCatalog):
       uPixelSize: { value: 32 },
       uMaxPixels: { value: HALO_MAX_PIXELS },
       uLayerAlpha: { value: 1 },
+      uYearsFromEpoch: { value: 0 },
       uMap: { value: makeHaloTexture() },
     },
     transparent: true,
@@ -208,13 +223,14 @@ export function createBrightStarHalos(scene: THREE.Scene, catalog: StarCatalog):
   return {
     points,
     count: picks.length,
-    update(camTruePosAu, layerAlpha, camera, drawingBufferHeight) {
+    update(camTruePosAu, layerAlpha, camera, drawingBufferHeight, yearsFromEpoch = 0) {
       const visible = layerAlpha > 0.002 && picks.length > 0
       points.visible = visible
       if (!visible) return
       camPc.set(camTruePosAu.x / PC_TO_AU, camTruePosAu.y / PC_TO_AU, camTruePosAu.z / PC_TO_AU)
       ;(material.uniforms.uCamPc.value as THREE.Vector3).copy(camPc)
       material.uniforms.uLayerAlpha.value = layerAlpha
+      material.uniforms.uYearsFromEpoch.value = yearsFromEpoch
       // Fixed angular size -> pixels: the vertical FOV spans drawingBufferHeight px, so
       // px-per-radian is height / fovRadians (the small-angle form is exact enough at ~1.7 deg).
       const fovRad = camera.fov * (Math.PI / 180)

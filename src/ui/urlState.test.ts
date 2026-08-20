@@ -201,6 +201,19 @@ describe('decodeViewState — rate snapping', () => {
     for (const r of RATES) expect(decodeViewState(`#rate=${r}`)!.rate).toBe(r)
   })
 
+  it('carries the deep-time steps — the ladder and the URL share one RATES list', () => {
+    // urlState imports RATES from timeControls, so these pass only if the proper-motion rates are
+    // actually on the ladder. Named explicitly rather than relying on the loop above, so removing
+    // a step is a failing test rather than a silently smaller loop.
+    const YEAR = 86400 * 365.25
+    expect(RATES).toContain(YEAR * 100)
+    expect(RATES).toContain(YEAR * 10000)
+    expect(decodeViewState(`#rate=${YEAR * 100}`)!.rate).toBe(YEAR * 100)
+    expect(decodeViewState(`#rate=${YEAR * 10000}`)!.rate).toBe(YEAR * 10000)
+    // 10 kyr/s is now the top of the ladder, so an absurd rate snaps there
+    expect(decodeViewState('#rate=1e30')!.rate).toBe(YEAR * 10000)
+  })
+
   it('drops a zero or negative rate (time never runs backwards here)', () => {
     expect(decodeViewState('#mode=orbit&rate=0')!.rate).toBeUndefined()
     expect(decodeViewState('#mode=orbit&rate=-86400')!.rate).toBeUndefined()

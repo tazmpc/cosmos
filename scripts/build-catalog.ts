@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { encodeCatalog } from '../src/data/catalogFormat'
-import { raDecDistToXyz, eqjToGalactic, polyfit, polyval } from '../src/data/starMath'
+import { raDecDistToXyz, eqjToGalactic, polyfit, polyval, tangentialVelocityPcYr, MAS_TO_RAD } from '../src/data/starMath'
 import { ballesterosInverseCi } from '../src/data/starColor'
 import { decodeDustGrid, cumulativeE } from '../src/data/dustMap'
 
@@ -12,12 +12,14 @@ const col = (name: string) => {
   if (i === -1) throw new Error(`column ${name} missing — HYG format changed?`)
   return i
 }
-const [cRa, cDec, cDist, cMag, cAbs, cCi, cProper, cBf] =
-  [col('ra'), col('dec'), col('dist'), col('mag'), col('absmag'), col('ci'), col('proper'), col('bf')]
+const [cRa, cDec, cDist, cMag, cAbs, cCi, cProper, cBf, cPmRa, cPmDec] =
+  [col('ra'), col('dec'), col('dist'), col('mag'), col('absmag'), col('ci'), col('proper'), col('bf'),
+   col('pmrarad'), col('pmdecrad')]
 
-const pos: number[] = [], absMag: number[] = [], ci: number[] = []
+const pos: number[] = [], absMag: number[] = [], ci: number[] = [], vel: number[] = []
 const names: Record<string, number> = {}
 let skipped = 0
+let hygWithPm = 0
 
 for (let i = 1; i < csv.length; i++) {
   const f = csv[i].split(',')
@@ -25,9 +27,32 @@ for (let i = 1; i < csv.length; i++) {
   const dist = parseFloat(f[cDist])
   // dist<=0 is the Sun; dist>=100000 is HYG's "distance unknown" sentinel
   if (!(dist > 0) || dist >= 100000) { skipped++; continue }
-  const [x, y, z] = raDecDistToXyz(parseFloat(f[cRa]), parseFloat(f[cDec]), dist)
+  const raHours = parseFloat(f[cRa]), decDeg = parseFloat(f[cDec])
+  const [x, y, z] = raDecDistToXyz(raHours, decDeg, dist)
   const index = pos.length / 3
   pos.push(x, y, z)
+  // Proper motion -> tangential velocity, pc/yr, EQJ.
+  //
+  // HYG's README says only "proper motion in right ascension and declination, in milliarcseconds
+  // per year" — it does NOT state whether pmra carries the cos(dec) factor. The data does: HYG
+  // lists Polaris (dec +89.264) at pmra 44.22 mas/yr, which is mu_alpha*; the raw d(alpha)/dt
+  // would be ~3450. Checked at scale as well — reconstructing HYG's own vx,vy,vz columns from
+  // (ra, dec, dist, pmra, pmdec, rv) over the 36,553 catalog stars with |dec| > 45 gives a mean
+  // relative error of 2.7e-4 treating pmra as mu_alpha*, versus 3.2e-1 if a cos(dec) is applied.
+  // So HYG matches the Gaia convention and neither source needs a correction here.
+  //
+  // The RADIAN columns, not the mas ones: HYG's `pmra`/`pmdec` are printed in a fixed width that
+  // rails at +-9999.99 mas/yr, and exactly one star in the file hits it — Barnard's Star, whose
+  // real mu_delta is 10362 mas/yr. `pmdecrad` for that same row is 5.0066e-5 rad/yr = 10327
+  // mas/yr, i.e. unclamped. Since Barnard's Star is the single most-watched object in this whole
+  // feature, taking the 3.6% haircut on it would be a poor trade for a shorter line of code.
+  const pmra = parseFloat(f[cPmRa]) / MAS_TO_RAD, pmdec = parseFloat(f[cPmDec]) / MAS_TO_RAD
+  if (Number.isFinite(pmra) && Number.isFinite(pmdec)) {
+    vel.push(...tangentialVelocityPcYr(raHours * 15, decDeg, dist, pmra, pmdec))
+    hygWithPm++
+  } else {
+    vel.push(0, 0, 0) // no measurement -> the star simply does not move
+  }
   absMag.push(parseFloat(f[cAbs]))
   const ciParsed = parseFloat(f[cCi])
   ci.push(Number.isNaN(ciParsed) ? 0.5 : ciParsed)
@@ -39,7 +64,7 @@ for (let i = 1; i < csv.length; i++) {
 
 if (process.argv.includes('--gaia')) {
   // keep named HYG stars (search needs them), replace the anonymous sky with Gaia
-  const keepPos: number[] = [], keepAbs: number[] = [], keepCi: number[] = []
+  const keepPos: number[] = [], keepAbs: number[] = [], keepCi: number[] = [], keepVel: number[] = []
   const remap: Record<string, number> = {}
   const cellOf = (raDeg: number, decDeg: number) => `${Math.round(raDeg * 50)}:${Math.round(decDeg * 50)}`
   const namedCells = new Set<string>()
@@ -47,6 +72,7 @@ if (process.argv.includes('--gaia')) {
   for (const [name, oldIdx] of Object.entries(names)) {
     keepPos.push(pos[oldIdx * 3], pos[oldIdx * 3 + 1], pos[oldIdx * 3 + 2])
     keepAbs.push(absMag[oldIdx]); keepCi.push(ci[oldIdx])
+    keepVel.push(vel[oldIdx * 3], vel[oldIdx * 3 + 1], vel[oldIdx * 3 + 2])
     remap[name] = n++
     const d = Math.hypot(pos[oldIdx * 3], pos[oldIdx * 3 + 1], pos[oldIdx * 3 + 2])
     const raDeg = Math.atan2(pos[oldIdx * 3 + 1], pos[oldIdx * 3]) * 180 / Math.PI
@@ -99,6 +125,54 @@ if (process.argv.includes('--gaia')) {
     console.log(`loaded ${teffByPos.size} usable Gaia effective temperatures`)
   }
 
+  // ---- measured proper motions (Gaia DR3 pmra/pmdec) ----
+  //
+  // A THIRD extract, joined exactly like the temperatures above and for the same reason:
+  // scripts/cache/gaia.csv predates this column set and carries no source_id, so the proper
+  // motions arrive in their own file keyed on full-precision ra/dec. Positions are untouched by
+  // this join, so stars.bin's position/absMag/colorIndex blocks stay byte-identical to the v1
+  // build — only the appended velocity block is new.
+  //
+  //   curl -fG 'https://gea.esac.esa.int/tap-server/tap/sync' \
+  //     --data-urlencode 'REQUEST=doQuery' --data-urlencode 'LANG=ADQL' \
+  //     --data-urlencode 'FORMAT=csv' \
+  //     --data-urlencode "QUERY=SELECT ra, dec, pmra, pmdec FROM gaiadr3.gaia_source \
+  //   WHERE phot_g_mean_mag < 10.5 AND parallax > 0.5 AND parallax_over_error > 5" \
+  //     -o scripts/cache/gaia_pm.csv
+  //
+  // (same 30-degree RA slicing as the teff pull — the full-sky form trips the statement timeout)
+  //
+  // GOTCHA, found the hard way: a slice can come back TRUNCATED at exactly 65,536 rows with a
+  // clean HTTP 200 and no error of any kind. The RA 240-270 slice did (65,536 of its 69,476
+  // rows); re-fetching it as six 5-degree slices returned all of them. Always check each slice's
+  // row count against the same RA bin of gaia.csv before concatenating — a power-of-two row count
+  // is the tell. The join-rate gate below is the backstop, but it only fires below 50%.
+  //
+  // Gaia's `pmra` is mu_alpha* (already multiplied by cos(dec)), which is exactly what
+  // tangentialVelocityPcYr expects — see its doc comment.
+  const pmByPos = new Map<string, [number, number]>()
+  {
+    let pmCsv: string
+    try {
+      pmCsv = readFileSync('scripts/cache/gaia_pm.csv', 'utf8')
+    } catch {
+      throw new Error('scripts/cache/gaia_pm.csv missing — see the TAP query in this file')
+    }
+    const rows = pmCsv.split('\n')
+    const ph = rows[0].split(',')
+    const [pRa, pDec, pPmRa, pPmDec] = [ph.indexOf('ra'), ph.indexOf('dec'), ph.indexOf('pmra'), ph.indexOf('pmdec')]
+    if (pRa === -1 || pDec === -1 || pPmRa === -1 || pPmDec === -1) throw new Error('gaia_pm.csv is missing a column')
+    for (let i = 1; i < rows.length; i++) {
+      const f = rows[i].split(',')
+      if (f.length < ph.length) continue
+      const mra = parseFloat(f[pPmRa]), mdec = parseFloat(f[pPmDec])
+      // Gaia leaves pmra/pmdec empty for the handful of 2-parameter sources; those stay at rest.
+      if (!Number.isFinite(mra) || !Number.isFinite(mdec)) continue
+      pmByPos.set(posKey(parseFloat(f[pRa]), parseFloat(f[pDec])), [mra, mdec])
+    }
+    console.log(`loaded ${pmByPos.size} Gaia proper motions`)
+  }
+
   // ---- measured reddening (Edenhofer et al. 2023 3D dust) ----
   //
   // colorIndex in this catalog means "the color this star LOOKS from the viewpoint", not its
@@ -133,6 +207,7 @@ if (process.argv.includes('--gaia')) {
   const gi = (nm: string) => gh.indexOf(nm)
   const [gRa, gDec, gPar, gMag, gBpRp] = [gi('ra'), gi('dec'), gi('parallax'), gi('phot_g_mean_mag'), gi('bp_rp')]
   let dropped = 0, measured = 0, fallback = 0, ebvSum = 0, ebvMax = 0
+  let pmHit = 0, pmMiss = 0
   const fitX: number[] = [], fitY: number[] = []          // same-star (BP−RP, B−V) pairs
   const fallbackAt: number[] = [], fallbackBpRp: number[] = []
   const ebvLowLat: number[] = [], ebvHighLat: number[] = []
@@ -147,6 +222,14 @@ if (process.argv.includes('--gaia')) {
     const [x, y, z] = raDecDistToXyz(raDeg / 15, decDeg, distPc)
     keepPos.push(x, y, z)
     keepAbs.push(parseFloat(f[gMag]) + 5 * (Math.log10(par) - 2)) // M = m + 5(log10 p_mas − 2)
+    const pm = pmByPos.get(posKey(raDeg, decDeg))
+    if (pm !== undefined) {
+      keepVel.push(...tangentialVelocityPcYr(raDeg, decDeg, distPc, pm[0], pm[1]))
+      pmHit++
+    } else {
+      keepVel.push(0, 0, 0) // no measurement -> the star simply does not move
+      pmMiss++
+    }
     // measured temperature (re-reddened along its own sight line) where Gaia fitted one;
     // BP−RP otherwise, converted to the same B−V system below
     const teff = teffByPos.get(posKey(raDeg, decDeg))
@@ -187,6 +270,16 @@ if (process.argv.includes('--gaia')) {
   if (measuredFrac < 0.5) {
     throw new Error(`teff join rate collapsed to ${(100 * measuredFrac).toFixed(1)}% (expected >= 50%) — ` +
       `gaia_teff.csv probably no longer matches gaia.csv row for row`)
+  }
+
+  // Same gate for the proper-motion join, and a stricter expectation: pmra/pmdec are core
+  // 5-parameter astrometry, present for essentially every source bright enough to be in this
+  // selection, so anything short of ~100% means the coordinate keys have stopped matching.
+  const pmFrac = pmHit / (pmHit + pmMiss)
+  console.log(`proper motions: ${pmHit} joined, ${pmMiss} missing (${(100 * pmFrac).toFixed(2)}%)`)
+  if (pmFrac < 0.5) {
+    throw new Error(`proper-motion join rate collapsed to ${(100 * pmFrac).toFixed(1)}% (expected >= 50%) — ` +
+      `gaia_pm.csv probably no longer matches gaia.csv row for row`)
   }
 
   // ---- BP−RP -> B−V conversion for the fallback stars ----
@@ -281,18 +374,48 @@ if (process.argv.includes('--gaia')) {
     positions: new Float32Array(keepPos),
     absMag: new Float32Array(keepAbs),
     colorIndex: new Float32Array(keepCi),
+    velocities: new Float32Array(keepVel),
   }
   writeFileSync('public/stars.bin', Buffer.from(encodeCatalog(cat)))
   writeFileSync('public/starnames.json', JSON.stringify(remap))
   console.log(`gaia mode: ${cat.count} stars (${dropped} deduped near named stars)`)
+  reportVelocities(cat.velocities, remap)
 } else {
   const catalog = {
     count: pos.length / 3,
     positions: new Float32Array(pos),
     absMag: new Float32Array(absMag),
     colorIndex: new Float32Array(ci),
+    velocities: new Float32Array(vel),
   }
   writeFileSync('public/stars.bin', Buffer.from(encodeCatalog(catalog)))
   writeFileSync('public/starnames.json', JSON.stringify(names))
   console.log(`wrote ${catalog.count} stars (${skipped} skipped), ${Object.keys(names).length} named → public/`)
+  console.log(`${hygWithPm} of them carry a HYG proper motion`)
+  reportVelocities(catalog.velocities, names)
+}
+
+/** Build-time sanity report on the velocity block: how many stars actually move, and which move
+ *  fastest. Barnard's Star has the largest proper motion of any known star, so it (or one of the
+ *  other classic high-pm nearby stars) topping this list is the signal that the math and the
+ *  join both landed. */
+function reportVelocities(velocities: Float32Array, nameIndex: Record<string, number>): void {
+  const count = velocities.length / 3
+  const nameOf = new Map<number, string>()
+  for (const [nm, i] of Object.entries(nameIndex)) nameOf.set(i, nm)
+  let nonzero = 0
+  const top: { i: number; v: number }[] = []
+  for (let i = 0; i < count; i++) {
+    const v = Math.hypot(velocities[i * 3], velocities[i * 3 + 1], velocities[i * 3 + 2])
+    if (v > 0) nonzero++
+    if (top.length < 3 || v > top[top.length - 1].v) {
+      top.push({ i, v })
+      top.sort((a, b) => b.v - a.v)
+      top.length = Math.min(top.length, 3)
+    }
+  }
+  console.log(`velocities: ${nonzero}/${count} nonzero (${((100 * nonzero) / count).toFixed(2)}%)`)
+  for (const t of top) {
+    console.log(`  fastest: ${(nameOf.get(t.i) ?? `#${t.i} (unnamed)`)} — ${t.v.toExponential(3)} pc/yr`)
+  }
 }

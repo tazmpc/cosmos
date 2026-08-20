@@ -19,7 +19,7 @@ import { createOrbitLines, updateOrbitLines } from './scene/orbits'
 import { loadConstellations, type ConstellationLines } from './scene/constellations'
 import { search, type SearchEntry } from './ui/search'
 import { FlyToAnimator } from './engine/flyTo'
-import { starFocusable } from './scene/starFocus'
+import { starFocusable, starTruePosAu } from './scene/starFocus'
 import { galaxyFocusable, GALAXY_ARRIVE_AU } from './scene/galaxyFocus'
 import { deepSkyFocusable, deepSkyMinApproachAu } from './scene/deepSkyFocus'
 import { GALAXIES } from './data/galaxies'
@@ -57,6 +57,40 @@ const clock = new SimClock(initialView?.t ? new Date(initialView.t) : new Date()
 // never disagree — no separate clock.setRate needed here. The handle it returns lets a link
 // arriving LATER (a hash edit in an already-open tab) move the ladder the same way.
 const timeControls = setupTimeControls(clock, initialView?.rate)
+
+// --- Deep time -------------------------------------------------------------------------------
+// Every star in stars.bin carries a measured proper motion, and the point shader moves it by
+// `velocity * uYearsFromEpoch`. That epoch is Gaia DR3's, J2016.0 — the reference date the
+// catalog's positions and proper motions are quoted at. (The ~700 HYG stars are quoted at J2000;
+// the 16-year difference moves even Barnard's Star only 0.0015 pc, ~200x below the point size it
+// is drawn at, so the two are treated as one epoch rather than carrying a per-star epoch column.)
+const GAIA_EPOCH_MS = Date.UTC(2016, 0, 1, 12, 0, 0)
+const MS_PER_JULIAN_YEAR = 365.25 * 86400 * 1000
+
+/** Hard limit on how far the linear extrapolation is allowed to run, in years either side of the
+ *  epoch. Proper motion is a straight-line fit to a velocity measured over a few years: it has no
+ *  galactic orbit in it, no gravity, and no radial term, so past a few hundred millennia it stops
+ *  being a projection and becomes a drawing. 200,000 years is roughly where the nearby stars have
+ *  rearranged the constellations completely but the sky is still recognisably a model of THIS
+ *  galaxy. Beyond it the clock keeps running and the planets keep moving — only the stars freeze,
+ *  which is the honest failure: the app stops claiming to know where they are. */
+const MAX_YEARS_FROM_EPOCH = 200_000
+
+function yearsFromEpoch(simDate: Date): number {
+  const y = (simDate.getTime() - GAIA_EPOCH_MS) / MS_PER_JULIAN_YEAR
+  return Math.max(-MAX_YEARS_FROM_EPOCH, Math.min(MAX_YEARS_FROM_EPOCH, y))
+}
+
+/** Constellation figures are a J2000 human artifact — the lines join stars that LOOK adjacent
+ *  from Earth right now. Once proper motion has moved the stars, the lines stop landing on them
+ *  and the figures become false. They are hidden past this many years from J2000 rather than
+ *  redrawn, because there is nothing to redraw them from: no catalog of "what people would have
+ *  seen in 12,000 AD" exists. ±5,000 yr is about where the Big Dipper's bowl visibly opens up. */
+const CONSTELLATION_EPOCH_HALF_LIFE_YEARS = 5000
+const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0)
+function constellationsValidAt(simDate: Date): boolean {
+  return Math.abs((simDate.getTime() - J2000_MS) / MS_PER_JULIAN_YEAR) < CONSTELLATION_EPOCH_HALF_LIFE_YEARS
+}
 const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 const orbits = createOrbitLines(engine.scene, clock.now())
 
@@ -378,7 +412,9 @@ function startMilkyWayExtLoad(): void {
 let constellations: ConstellationLines | null = null
 loadConstellations(engine.scene).then(c => {
   constellations = c
-  if (mode === 'sky') c.setVisible(true) // in case sky mode was entered before this resolved
+  // in case sky mode was entered before this resolved — and only if the sim date is still inside
+  // the figures' epoch window (constellationsShown is the latch the per-frame check maintains)
+  if (mode === 'sky') c.setVisible(constellationsShown)
 })
 
 export function planetFocusable(n: PlanetNode): Focusable {
@@ -401,6 +437,9 @@ const controls = new FocusOrbitControls(
 const hudName = document.querySelector('#hud .focus-name')!
 const hudDist = document.querySelector('#hud .focus-dist')!
 const camTruePos = new THREE.Vector3()
+/** Per-frame scratch for star positions in the hover pass (which runs over ~700 named stars every
+ *  throttled pick) — reused so the pass keeps allocating nothing. */
+const scratchStarPos = new THREE.Vector3()
 
 const flyer = new FlyToAnimator(controls)
 
@@ -412,6 +451,12 @@ skyControls.enabled = false
 let mode: 'orbit' | 'sky' = 'orbit'
 const skyToggleBtn = document.getElementById('sky-toggle')!
 const skyHint = document.getElementById('sky-hint')!
+const SKY_HINT_BASE = skyHint.textContent ?? 'Sky view'
+const SKY_HINT_EPOCH_LOCKED = SKY_HINT_BASE +
+  ' — constellation figures are epoch-locked; beyond ±5,000 yr the stars have moved'
+/** Mirrors what the constellation group's visibility currently is, so the per-frame epoch check
+ *  only touches the scene (and the hint text) on an actual transition. */
+let constellationsShown = false
 const hud = document.getElementById('hud')!
 const skyViewDir = new THREE.Vector3()
 let infoCardWasVisible = false
@@ -428,7 +473,11 @@ function enterSky(): void {
   hud.style.display = 'none'
   skyHint.style.display = 'block'
   skyToggleBtn.classList.add('active')
-  constellations?.setVisible(true)
+  // The per-frame sky path below owns visibility from here on; seed the latch from the current
+  // sim date so entering sky view in deep time never flashes the lines for one frame.
+  constellationsShown = constellationsValidAt(clock.now())
+  constellations?.setVisible(constellationsShown)
+  skyHint.textContent = constellationsShown ? SKY_HINT_BASE : SKY_HINT_EPOCH_LOCKED
 }
 
 function exitSky(): void {
@@ -443,6 +492,7 @@ function exitSky(): void {
   hud.style.display = 'block'
   skyHint.style.display = 'none'
   skyToggleBtn.classList.remove('active')
+  constellationsShown = false
   constellations?.setVisible(false)
 }
 
@@ -578,7 +628,7 @@ function focusEntry(e: SearchEntry, instant?: InstantView): void {
     if (host) showExoplanetHostCard(e.name, host)
   } else if (stars) {
     const exo = exoplanets ? hostForStarName(exoplanets, e.name) : undefined
-    go(starFocusable(stars.catalog, e.key as number, e.name), 2000)
+    go(starFocusable(stars.catalog, e.key as number, e.name, () => yearsFromEpoch(clock.now())), 2000)
     showStarCard(stars.catalog, e.key as number, e.name, exo)
   }
   ;(document.getElementById('search') as HTMLInputElement).value = ''
@@ -923,12 +973,13 @@ function hoverCandidates(): HoverTarget[] {
     pushHoverCandidate(out, t.pos.x, t.pos.y, t.pos.z, t.entry.name, 'dso', t.entry, 'deep sky')
   }
   if (stars) {
-    const pos = stars.catalog.positions
     const absMag = stars.catalog.absMag
+    // Through starTruePosAu, not catalog.positions: a hover label has to sit on the star as the
+    // shader draws it, which at 10 kyr/s is somewhere quite different from its epoch position.
+    const years = yearsFromEpoch(clock.now())
     for (const t of starHoverList) {
-      const x = pos[t.idx * 3] * PC_TO_AU
-      const y = pos[t.idx * 3 + 1] * PC_TO_AU
-      const z = pos[t.idx * 3 + 2] * PC_TO_AU
+      starTruePosAu(stars.catalog, t.idx, years, scratchStarPos)
+      const { x, y, z } = scratchStarPos
       const distPc = Math.hypot(x - camTruePos.x, y - camTruePos.y, z - camTruePos.z) / PC_TO_AU
       const appMag = apparentMagnitude(absMag[t.idx], distPc)
       if (!Number.isFinite(appMag) || appMag > HOVER_STAR_MAG_LIMIT) continue
@@ -1122,6 +1173,15 @@ function frame(realMs: number) {
   repositionMeshes(planets, sunLight, camTruePos)
   updateOrbitLines(orbits, camTruePos)
   if (mode === 'sky') {
+    // Constellation figures only mean anything near their own epoch — see constellationsValidAt.
+    // Two cheap comparisons per frame, and the hint says why the lines went away rather than
+    // leaving the user to wonder whether something broke.
+    const figuresValid = constellationsValidAt(simNow)
+    if (figuresValid !== constellationsShown) {
+      constellationsShown = figuresValid
+      constellations?.setVisible(figuresValid)
+      skyHint.textContent = figuresValid ? SKY_HINT_BASE : SKY_HINT_EPOCH_LOCKED
+    }
     engine.camera.position.set(0, 0, 0)
     engine.camera.lookAt(skyControls.getViewDir(skyViewDir))
     engine.camera.fov = skyControls.fov
@@ -1147,13 +1207,18 @@ function frame(realMs: number) {
   // it needs THIS frame's orientation/FOV, not the previous frame's. Nothing between the old call
   // site and here reads the layers (they only write shader uniforms + per-chunk visibility), so
   // the move is behaviour-neutral apart from the culling being one frame fresher.
-  stars?.update(camTruePos, la.stars, engine.camera)
+  // One number drives proper motion for every point layer. The star layer's velocities are real
+  // and it deforms; the galaxy and Milky Way catalogs are format v1, so their velocity attribute
+  // is all zeros and the same uniform multiplies out to nothing — same shader, no branch.
+  const simYears = yearsFromEpoch(simNow)
+  stars?.update(camTruePos, la.stars, engine.camera, simYears)
   // Halos ride the star layer's own crossfade, and need the CURRENT fov (sky view zooms it) plus
-  // the framebuffer height (window resize / dynamic-resolution governor) to hold a fixed angular size.
-  brightStars?.update(camTruePos, la.stars, engine.camera, engine.renderer.domElement.height)
-  milkyWay?.update(camTruePos, la.milkyWay, engine.camera)
-  milkyWayExt?.update(camTruePos, la.milkyWayExt, engine.camera)
-  galaxies?.update(camTruePos, la.galaxies, engine.camera)
+  // the framebuffer height (window resize / dynamic-resolution governor) to hold a fixed angular
+  // size — and the same epoch offset, so a halo stays on its star.
+  brightStars?.update(camTruePos, la.stars, engine.camera, engine.renderer.domElement.height, simYears)
+  milkyWay?.update(camTruePos, la.milkyWay, engine.camera, simYears)
+  milkyWayExt?.update(camTruePos, la.milkyWayExt, engine.camera, simYears)
+  galaxies?.update(camTruePos, la.galaxies, engine.camera, simYears)
   // Asteroids are exempt from layerAlphas: the belt is a solar-system-scale object, not a
   // galactic one, so it gets its own hard 100 AU distance gate inside the layer rather than a
   // crossfade tuned for kpc-scale ramps.

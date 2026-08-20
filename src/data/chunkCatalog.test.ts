@@ -169,4 +169,32 @@ describe('chunkCatalog', () => {
     }
     expect(drawn / total).toBeLessThan(0.6)
   })
+
+  it('carries velocities through the reorder, row-aligned with positions', () => {
+    const pts: [number, number, number][] = []
+    let seed = 11
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296 }
+    for (let i = 0; i < 300; i++) pts.push([rnd() * 10, rnd() * 10, rnd() * 10])
+    const cat = makeCatalog(pts)
+    // a distinct, recoverable velocity per row
+    cat.velocities = new Float32Array(cat.count * 3)
+    for (let i = 0; i < cat.count; i++) {
+      cat.velocities[i * 3] = i; cat.velocities[i * 3 + 1] = -i; cat.velocities[i * 3 + 2] = i * 0.5
+    }
+    const { catalog, newIndexOf } = chunkCatalog(cat, 64)
+    expect(catalog.velocities).toBeInstanceOf(Float32Array)
+    expect(catalog.velocities!.length).toBe(cat.count * 3)
+    for (let i = 0; i < cat.count; i++) {
+      const j = newIndexOf[i]
+      expect(catalog.velocities![j * 3]).toBe(cat.velocities[i * 3])
+      expect(catalog.velocities![j * 3 + 1]).toBe(cat.velocities[i * 3 + 1])
+      expect(catalog.velocities![j * 3 + 2]).toBe(cat.velocities[i * 3 + 2])
+    }
+  })
+
+  it('leaves velocities undefined when the input catalog has none', () => {
+    const { catalog } = chunkCatalog(makeCatalog(OCTANTS), 8)
+    expect(catalog.velocities).toBeUndefined()
+  })
+
 })
