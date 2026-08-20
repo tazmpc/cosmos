@@ -1,8 +1,10 @@
 import type { SimClock } from '../sim/clock'
 
-interface RateStep { rate: number; label: string }
+export interface RateStep { rate: number; label: string }
 
-const STEPS: RateStep[] = [
+/** The app's time-rate ladder. Exported because it is also the set a deep link's `rate=` is
+ *  snapped to (see src/ui/urlState.ts) — the URL can only ever name a rate this UI can display. */
+export const RATE_STEPS: RateStep[] = [
   { rate: 1, label: 'real time' },
   { rate: 60, label: '1 min/s' },
   { rate: 3600, label: '1 hr/s' },
@@ -12,8 +14,15 @@ const STEPS: RateStep[] = [
   { rate: 86400 * 365.25, label: '1 yr/s' },
 ]
 
-export function setupTimeControls(clock: SimClock): void {
-  let stepIdx = 0
+/** Just the rate values, in ladder order. */
+export const RATES: number[] = RATE_STEPS.map((s) => s.rate)
+
+const STEPS = RATE_STEPS
+
+/** `initialRate` (a deep link's restored rate — already snapped to a real step by
+ *  decodeViewState) starts the ladder at that step so the label matches the clock. */
+export function setupTimeControls(clock: SimClock, initialRate?: number): void {
+  let stepIdx = initialRate === undefined ? 0 : Math.max(0, STEPS.findIndex((s) => s.rate === initialRate))
   const pauseBtn = document.getElementById('time-pause')!
   const rateEl = document.getElementById('time-rate')!
   const dateEl = document.getElementById('sim-date')!

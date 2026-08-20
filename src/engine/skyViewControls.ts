@@ -38,9 +38,10 @@ export class SkyViewControls {
     })
     canvas.addEventListener('pointermove', (e: PointerEvent) => {
       if (!this.enabled || !this.dragging) return
-      this.yaw -= (e.clientX - this.lastX) * 0.005
-      this.pitch += (e.clientY - this.lastY) * 0.005
-      this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch))
+      this.setOrientation(
+        this.yaw - (e.clientX - this.lastX) * 0.005,
+        this.pitch + (e.clientY - this.lastY) * 0.005,
+      )
       this.lastX = e.clientX; this.lastY = e.clientY
     })
     canvas.addEventListener('pointerup', () => { this.dragging = false })
@@ -53,6 +54,20 @@ export class SkyViewControls {
       this.fov = Math.max(15, Math.min(90, this.fov * Math.exp(e.deltaY * 0.0008)))
     }, { passive: false })
   }
+
+  /** Sets the look direction (radians), applying the same pitch clamp the drag handler uses.
+   *  Called by the drag handler and by a deep link restoring a shared sky view. */
+  setOrientation(yaw: number, pitch: number): void {
+    this.yaw = yaw
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch))
+  }
+
+  /** Current look angles (radians) — read by the deep-link URL writer in main.ts. */
+  getYaw(): number { return this.yaw }
+  getPitch(): number { return this.pitch }
+
+  /** True while a pointer drag is steering the view; the deep-link writer pauses mid-drag. */
+  isDragging(): boolean { return this.dragging }
 
   getViewDir(out: THREE.Vector3): THREE.Vector3 {
     return viewDirFromYawPitch(this.yaw, this.pitch, out)

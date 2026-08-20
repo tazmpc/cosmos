@@ -24,11 +24,19 @@
       border-radius: 5px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
     #time-controls button:hover { background: #26304a; }
     #sim-date { min-width: 150px; text-align: center; font-variant-numeric: tabular-nums; }
-    #sky-toggle { position: absolute; right: 12px; bottom: 58px; background: #1a2230;
+    #sky-toggle, #share-link { position: absolute; bottom: 58px; background: #1a2230;
       color: #cfd8e3; border: 1px solid #2b3548; border-radius: 5px; padding: 6px 10px;
       cursor: pointer; font-size: 16px; line-height: 1; }
-    #sky-toggle:hover { background: #26304a; }
+    #sky-toggle { right: 12px; }
+    #share-link { right: 56px; }
+    #sky-toggle:hover, #share-link:hover { background: #26304a; }
     #sky-toggle.active { background: #2b3d5c; border-color: #4a6a9a; }
+    /* Transient "Link copied" confirmation for the 🔗 button (src/ui/banner.ts's showToast).
+       Opacity-faded, never display:none, so the transition actually runs; pointer-events off so
+       it can never swallow a click on the controls it sits above. */
+    #toast { position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%);
+      opacity: 0; transition: opacity 220ms ease; pointer-events: none; z-index: 20;
+      max-width: 80vw; overflow-wrap: anywhere; text-align: center; }
     #sky-hint { top: 60px; left: 50%; transform: translateX(-50%);
       display: none; text-align: center; color: #9fb0c8; }
     #info-card { top: 12px; right: 12px; width: 240px; display: none; }
@@ -68,7 +76,9 @@
     <button id="time-now">Now</button>
     <span id="sim-date"></span>
   </div>
+  <button id="share-link" title="Copy a link to this view">🔗</button>
   <button id="sky-toggle" title="Sky view">🔭</button>
+  <div id="toast" class="panel"></div>
   <div id="sky-hint" class="panel">Sky view — drag to look, scroll to zoom, Esc to exit</div>
   <div id="info-card" class="panel">
     <span class="close">×</span>

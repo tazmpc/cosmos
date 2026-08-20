@@ -24,6 +24,40 @@ constellation lines, CDS/hips2fits DSS2 imagery. See CREDITS.md.
   and fly there
 - **Click** a planet or bright star to fly to it; a card shows its real data
 - **Time controls** (bottom right): pause, step the rate up to 1 year/second, reset to now
+- **🔗** (bottom right): copy a link to exactly what you are looking at — see "Sharing a view"
+
+## Sharing a view
+
+The address bar always holds the current view. Click **🔗** to copy it, or just copy the URL —
+opening it puts someone else exactly where you were, with no fly-in animation and with the
+simulation clock set to your moment, still running at your rate.
+
+The state lives entirely in the `#` fragment, so it never touches the hosting path:
+
+```
+#mode=orbit&focus=planet:saturn&d=3.11406e-3&yaw=0.5&pitch=0.4&t=2026-08-19T12:00:00.000Z&rate=1
+#mode=sky&yaw=-1.32&pitch=-0.72&fov=36.87&t=2026-08-19T12:00:00.000Z&rate=1
+```
+
+| key | meaning |
+| --- | --- |
+| `mode` | `orbit` (flying around an object) or `sky` (standing on Earth, looking up) |
+| `focus` | `<kind>:<key>` — `planet:saturn`, `planet:europa`, `star:Sirius`, `galaxy:m31`, `dso:NGC7000`, `asteroid:ceres`, `spacecraft:voyager1`. Orbit mode only |
+| `d` | camera distance from the focus, in AU. Orbit mode only |
+| `yaw`, `pitch` | camera angles in radians |
+| `fov` | field of view in degrees. Sky mode only |
+| `t` | simulation date, ISO 8601 UTC |
+| `rate` | simulation speed in seconds per second (`1`, `60`, `3600`, `86400`, …) |
+
+The fragment is hand-editable. Unknown keys are ignored, out-of-range numbers are clamped, a
+malformed field is dropped rather than breaking the load, and `focus` accepts an object's
+display name as readily as its id (`asteroid:Ceres` works) — the app then rewrites the URL into
+its canonical form. A URL that names nothing recognisable simply opens the default view.
+
+Objects living in the big deferred catalogs — the 486k-asteroid belt above all — are not loaded
+when the page starts, so a link to one is retried until its catalog arrives (up to 20 seconds,
+after which it gives up with a console warning and stays at the default view). The URL stops
+updating itself while a link is still resolving, while you are dragging, and during a fly-to.
 
 ## Sky view
 

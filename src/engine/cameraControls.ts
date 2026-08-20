@@ -68,6 +68,16 @@ export class FocusOrbitControls {
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch))
   }
 
+  /** Current orbit angles (radians). Read by the deep-link URL writer in main.ts — the angles
+   *  are private because only setOrientation may write them (it owns the pitch clamp), but
+   *  reading them is how the shared link records where the camera actually is. */
+  getYaw(): number { return this.yaw }
+  getPitch(): number { return this.pitch }
+
+  /** True while a pointer drag is steering the camera. The deep-link writer suspends itself
+   *  mid-drag rather than rewriting the URL 1x/second through the whole gesture. */
+  isDragging(): boolean { return this.dragging }
+
   setFocus(f: Focusable, distance?: number): void {
     this.focus = f
     if (distance !== undefined) this.distance = distance

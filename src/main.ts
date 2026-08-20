@@ -12,7 +12,7 @@ import { loadGalaxyField, type GalaxyField } from './scene/galaxyField'
 import { createGalaxySprites, createDeepSkySprites, createStandaloneGlowSprite } from './scene/galaxySprites'
 import { createObjectImagery, galaxyImageTargets, deepSkyImageTargets, type ImageTarget } from './scene/objectImagery'
 import { layerAlphas } from './scene/layerAlphas'
-import { showBanner, hideBanner } from './ui/banner'
+import { showBanner, hideBanner, showToast } from './ui/banner'
 import { apparentMagnitude, raDecDistToXyz } from './data/starMath'
 import { angularFovDegFromArcmin } from './data/angularSize'
 import { createOrbitLines, updateOrbitLines } from './scene/orbits'
@@ -40,10 +40,22 @@ import { KPC_TO_AU, MPC_TO_AU, PC_TO_AU } from './data/units'
 import { pickNearest, placeLabel, HOVER_PRIORITY, type HoverCandidate, type HoverKind } from './ui/hoverPick'
 import { dateToJd } from './sim/kepler'
 import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
+import { decodeViewState, encodeViewState, type FocusRef, type ViewState } from './ui/urlState'
 
 const engine = createEngine(document.getElementById('app')!)
-const clock = new SimClock(new Date())
-setupTimeControls(clock)
+
+// --- Deep links: read the incoming URL before anything is built ------------------------------
+// Parsed exactly once, here, so the clock can be constructed at the shared simulation date
+// rather than jumped to it a frame later (a jump would make every ephemeris-driven layer
+// visibly re-solve). Everything else the link carries — mode, camera, focus — is applied
+// further down, once the objects that own that state exist. Null means "no link, default view".
+// decodeViewState never throws and never half-applies junk; see src/ui/urlState.ts.
+const initialView = decodeViewState(location.hash)
+
+const clock = new SimClock(initialView?.t ? new Date(initialView.t) : new Date())
+// setupTimeControls applies the step it starts on to the clock, so the rate and its label can
+// never disagree — no separate clock.setRate needed here.
+setupTimeControls(clock, initialView?.rate)
 const { nodes: planets, sunLight } = createSolarSystem(engine.scene)
 const orbits = createOrbitLines(engine.scene, clock.now())
 
@@ -178,6 +190,9 @@ loadStarField(engine.scene)
       ...starEntries,
     ]
     setupSearch(searchEntries)
+    // Same array reference every later catalog pushes into (see below) — the deep-link resolver
+    // polls it to find the object a shared URL names, whenever that object's catalog lands.
+    allSearchEntries = searchEntries
 
     // OpenNGC entries append in once loaded (usually already resolved by the time the star
     // catalog is — it's a much smaller fetch). `searchEntries` is the same array `search()` reads
@@ -450,19 +465,62 @@ window.addEventListener('keydown', (ev) => {
 })
 // -----------------------------------------------------------------------------------------
 
-function focusEntry(e: SearchEntry): void {
+/**
+ * Camera placement for a deep link's arrival: no fly-to, just be there. A shared link is opened
+ * to LOOK at something, and a 6-second cinematic sweep on every open — with the auto-aim then
+ * overwriting the angles the link carefully recorded — is exactly the wrong behaviour. All
+ * three fields are optional; anything absent keeps the target's own default (arrival distance,
+ * current angles).
+ */
+interface InstantView { d?: number; yaw?: number; pitch?: number }
+
+/** The kind+key a deep link would use for the CURRENT focus, or null when nothing shareable is
+ *  focused. Maintained by focusEntry (and the raycast planet-click fallback), read by the URL
+ *  writer — the reverse of the resolver's lookup. Starts at the app's own default focus. */
+let currentFocusRef: FocusRef | null = { kind: 'planet', key: 'earth' }
+
+/**
+ * The stable deep-link identity of a search entry, or null if it isn't linkable.
+ *
+ * Stars are the one kind whose SearchEntry.key is NOT usable: it's an index into stars.bin, a
+ * build artefact free to be reordered by the next catalog rebuild, so the link records the star's
+ * NAME instead. A star entry whose key is already a string is a card-only exoplanet host (see
+ * FAMOUS_UNMATCHED_HOSTS) — there is no point in the scene to fly to, so it is not linkable.
+ */
+function deepLinkRefFor(e: SearchEntry): FocusRef | null {
+  if (e.kind === 'star') return typeof e.key === 'number' ? { kind: 'star', key: e.name } : null
+  return { kind: e.kind, key: String(e.key) }
+}
+
+function focusEntry(e: SearchEntry, instant?: InstantView): void {
   if (mode === 'sky') exitSky() // a search fly-to exits sky view first
+  const ref = deepLinkRefFor(e)
+  /**
+   * Start the camera move for this entry — a fly-to normally, an immediate placement when a
+   * deep link is being restored. The instant path deliberately bypasses FlyToAnimator entirely
+   * rather than fast-forwarding it: the animator's arrival auto-aim would overwrite the yaw and
+   * pitch the link is trying to restore.
+   */
+  const go = (target: Focusable, arriveDist: number): void => {
+    currentFocusRef = ref
+    if (!instant) { flyer.start(target, arriveDist); return }
+    flyer.cancel()
+    controls.setFocus(target, instant.d ?? arriveDist) // setFocus re-clamps to minApproachAu
+    if (instant.yaw !== undefined || instant.pitch !== undefined) {
+      controls.setOrientation(instant.yaw ?? controls.getYaw(), instant.pitch ?? controls.getPitch())
+    }
+  }
   // Spacecraft trajectory polylines are visible only while a spacecraft is the current focus
   // (see spacecraft.ts's doc comment) — cleared unconditionally here, then re-set below if the
   // new focus IS a spacecraft, so navigating away from one always hides its line.
   spacecraft?.setFocused(null)
   if (e.kind === 'planet') {
     const node = planets.find(p => p.def.id === e.key)!
-    flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+    go(planetFocusable(node), node.def.radiusAu * 8)
     showPlanetCard(node.def)
   } else if (e.kind === 'galaxy') {
     const def = GALAXIES.find(g => g.id === e.key)!
-    flyer.start(galaxyFocusable(def), GALAXY_ARRIVE_AU)
+    go(galaxyFocusable(def), GALAXY_ARRIVE_AU)
     showGalaxyCard(def)
     objectImagery.focus(def.id)
   } else if (e.kind === 'asteroid') {
@@ -470,7 +528,7 @@ function focusEntry(e: SearchEntry): void {
     // chases a moving target and the camera keeps tracking it afterwards as time runs.
     const hit = asteroidByKey.get(e.key as string)
     if (hit && asteroids) {
-      flyer.start(asteroidFocusable(asteroids, hit.index, hit.def.name, () => clock.now()), ASTEROID_ARRIVE_AU)
+      go(asteroidFocusable(asteroids, hit.index, hit.def.name, () => clock.now()), ASTEROID_ARRIVE_AU)
       showAsteroidCard(hit.def, asteroidOrbitSummary(asteroids, hit.index))
     }
   } else if (e.kind === 'spacecraft') {
@@ -478,7 +536,7 @@ function focusEntry(e: SearchEntry): void {
     // both re-solve the trajectory from clock.now() every frame.
     const def = spacecraft?.byId.get(e.key as string)
     if (def && spacecraft) {
-      flyer.start(spacecraftFocusable(def, () => clock.now()), SPACECRAFT_ARRIVE_AU)
+      go(spacecraftFocusable(def, () => clock.now()), SPACECRAFT_ARRIVE_AU)
       spacecraft.setFocused(def.id)
       const pos = spacecraftPositionAt(def, dateToJd(clock.now()))
       showSpacecraftCard(def, pos.length(), pos.distanceTo(earth.truePos))
@@ -493,12 +551,12 @@ function focusEntry(e: SearchEntry): void {
     if (def) {
       // Arrive a bit beyond the minimum approach so the object is framed, not sat inside — same
       // "frame it, don't clip it" idea as the galaxy/planet arrival distances above.
-      flyer.start(deepSkyFocusable(def), deepSkyMinApproachAu(def) * 4)
+      go(deepSkyFocusable(def), deepSkyMinApproachAu(def) * 4)
       showDeepSkyCard(def)
       objectImagery.focus(def.id)
     } else {
       const obj = openNgcById.get(e.key as string)!
-      flyer.start(openNgcFocusable(obj), openNgcMinApproachAu(obj) * 4)
+      go(openNgcFocusable(obj), openNgcMinApproachAu(obj) * 4)
       showOpenNgcCard(obj)
       focusOpenNgcImagery(obj)
     }
@@ -511,7 +569,7 @@ function focusEntry(e: SearchEntry): void {
     if (host) showExoplanetHostCard(e.name, host)
   } else if (stars) {
     const exo = exoplanets ? hostForStarName(exoplanets, e.name) : undefined
-    flyer.start(starFocusable(stars.catalog, e.key as number, e.name), 2000)
+    go(starFocusable(stars.catalog, e.key as number, e.name), 2000)
     showStarCard(stars.catalog, e.key as number, e.name, exo)
   }
   ;(document.getElementById('search') as HTMLInputElement).value = ''
@@ -547,6 +605,149 @@ function setupSearch(entries: SearchEntry[]): void {
     Array.from(resultsEl.children).forEach((c, i) => (c as HTMLElement).className = i === selIdx ? 'sel' : '')
   })
 }
+
+// --- Deep links: apply the incoming URL, then keep it current ---------------------------------
+// The encode/decode half is pure and tested (src/ui/urlState.ts). This half is the part that has
+// to deal with time: the catalogs a link may reference load asynchronously, on schedules that
+// range from "already resolved" (curated galaxies and DSOs are compiled in) to "waits for the
+// first rendered frame and then for browser idle" (the 17 MB asteroid belt). So a link is not
+// resolved once at startup — it is retried until its target exists, or until it clearly never
+// will.
+
+/** Every search entry the app knows about, assigned once loadStarField sets search up. This is
+ *  the same array every later catalog (OpenNGC, asteroids, spacecraft, exoplanet hosts) pushes
+ *  into, so polling it sees new kinds appear as their loads land. */
+let allSearchEntries: SearchEntry[] = []
+
+const DEEP_LINK_RETRY_MS = 500
+/** Long enough to cover the slowest path to a linkable object on a cold cache: the asteroid belt
+ *  is gated on a rendered frame, then on requestIdleCallback, then a 17 MB fetch and decode. */
+const DEEP_LINK_TIMEOUT_MS = 20_000
+
+/** True while the initial link is still waiting for its catalog. The URL writer stays silent
+ *  until it clears — otherwise the 1 Hz writer would overwrite the very URL being resolved with
+ *  the default Earth view, and the link would destroy itself before it could be applied. */
+let deepLinkPending = false
+
+/**
+ * The entry a link points at, if it has loaded yet.
+ *
+ * Two passes, because links get hand-edited and hand-typed. The first is the exact match on the
+ * canonical key this app emits ('asteroid:ceres'). The second accepts the object's display NAME
+ * or its id, case-insensitively — so 'asteroid:Ceres' and 'planet:Saturn' resolve to the same
+ * place, and the writer then rewrites the fragment into canonical form. Exact-first matters:
+ * a loose match must never beat a real, exact one.
+ */
+function findEntryByRef(ref: FocusRef): SearchEntry | undefined {
+  for (const e of allSearchEntries) {
+    const r = deepLinkRefFor(e)
+    if (r && r.kind === ref.kind && r.key === ref.key) return e
+  }
+  const loose = ref.key.toLowerCase()
+  for (const e of allSearchEntries) {
+    const r = deepLinkRefFor(e)
+    if (!r || r.kind !== ref.kind) continue
+    if (r.key.toLowerCase() === loose || e.name.toLowerCase() === loose) return e
+  }
+  return undefined
+}
+
+/** Polls for the linked object until it exists, then places the camera on it instantly. */
+function resolveDeepLinkFocus(ref: FocusRef, view: ViewState): void {
+  deepLinkPending = true
+  const deadline = performance.now() + DEEP_LINK_TIMEOUT_MS
+  const attempt = (): void => {
+    const entry = findEntryByRef(ref)
+    if (entry) {
+      focusEntry(entry, { d: view.d, yaw: view.yaw, pitch: view.pitch })
+      deepLinkPending = false
+      return
+    }
+    if (performance.now() >= deadline) {
+      console.warn(
+        `Deep link: no ${ref.kind} "${ref.key}" in any loaded catalog after ` +
+        `${DEEP_LINK_TIMEOUT_MS / 1000}s — staying at the default view.`)
+      deepLinkPending = false
+      return
+    }
+    setTimeout(attempt, DEEP_LINK_RETRY_MS)
+  }
+  attempt() // the first try is synchronous — curated targets can resolve without any delay
+}
+
+/** Camera-only restore, for an orbit link with no focus (or one whose focus never resolved). */
+function applyOrbitCamera(view: ViewState): void {
+  if (view.d !== undefined) controls.setFocus(controls.focus, view.d)
+  if (view.yaw !== undefined || view.pitch !== undefined) {
+    controls.setOrientation(view.yaw ?? controls.getYaw(), view.pitch ?? controls.getPitch())
+  }
+}
+
+if (initialView) {
+  if (initialView.mode === 'sky') {
+    // Sky view owns the camera outright (position pinned to Earth, orientation and FOV straight
+    // from skyControls), so there is nothing to wait for — no catalog is involved in aiming.
+    enterSky()
+    skyControls.setOrientation(initialView.yaw ?? 0, initialView.pitch ?? 0)
+    if (initialView.fov !== undefined) skyControls.fov = initialView.fov
+  } else if (initialView.focus) {
+    resolveDeepLinkFocus(initialView.focus, initialView)
+  } else {
+    applyOrbitCamera(initialView)
+  }
+}
+
+/** The view as it stands right now, in the form a URL records. */
+function currentViewState(): ViewState {
+  const s: ViewState = { mode, t: clock.now().toISOString(), rate: clock.getRate() }
+  if (mode === 'sky') {
+    s.yaw = skyControls.getYaw()
+    s.pitch = skyControls.getPitch()
+    s.fov = skyControls.fov
+  } else {
+    if (currentFocusRef) s.focus = currentFocusRef
+    s.d = controls.distance
+    s.yaw = controls.getYaw()
+    s.pitch = controls.getPitch()
+  }
+  return s
+}
+
+let lastWrittenHash = ''
+
+/**
+ * Writes the current view into the address bar with replaceState — the fragment only, as a
+ * RELATIVE url, so the deployment subpath (GitHub Pages serves this at /cosmos/) is untouched.
+ * replaceState rather than pushState: this fires once a second, and burying the back button
+ * under a thousand camera positions would make leaving the page impossible.
+ *
+ * Normally suppressed mid-drag and mid-fly — those are transitional states nobody means to
+ * share, and rewriting the URL 60 times during a fly-to is pure noise. `force` is the 🔗
+ * button's path: an explicit share means "this instant", whatever the camera is doing.
+ */
+function updateUrl(force = false): void {
+  if (!force) {
+    if (deepLinkPending || flyer.isActive()) return
+    if (controls.isDragging() || skyControls.isDragging()) return
+  }
+  const hash = encodeViewState(currentViewState())
+  if (hash === lastWrittenHash) return
+  lastWrittenHash = hash
+  history.replaceState(null, '', '#' + hash)
+}
+
+document.getElementById('share-link')!.addEventListener('click', () => {
+  updateUrl(true) // the address bar may be up to a second stale, or never written at all
+  const url = location.href
+  // A click is a user gesture, so the clipboard permission is satisfied — but the API itself is
+  // absent outside a secure context (plain http on a LAN address, say). Both the missing-API and
+  // rejected-promise paths fall back to showing the URL in the toast, which is at least
+  // selectable and copyable by hand.
+  const copied = navigator.clipboard?.writeText(url)
+  if (copied) copied.then(() => showToast('Link copied'), () => showToast(url, 8000))
+  else showToast(url, 8000)
+})
+// ----------------------------------------------------------------------------------------------
 
 // --- Hover labels for notable objects ------------------------------------------------------
 // Cursor proximity reveals a floating name label for the things this project treats as landmarks:
@@ -785,6 +986,7 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
     if (node.def.name !== controls.focus.name) {
       spacecraft?.setFocused(null)
       flyer.start(planetFocusable(node), node.def.radiusAu * 8)
+      currentFocusRef = { kind: 'planet', key: node.def.id } // keep the shareable URL truthful
       showPlanetCard(node.def)
     }
     return
@@ -802,6 +1004,12 @@ const resolutionGovernor = new ResolutionGovernor()
 // one-shot trigger. Same throttle shape as objectImagery's own proximity sweep.
 let milkyWayExtCheckAccumS = 0
 const MILKY_WAY_EXT_CHECK_INTERVAL_S = 1
+
+// ~1 Hz throttle for the deep-link URL writer (updateUrl above). Its own accumulator rather than
+// sharing the Milky Way one: that check latches off permanently after the exterior layer loads,
+// and the URL has to keep tracking for the whole session.
+let urlWriteAccumS = 0
+const URL_WRITE_INTERVAL_S = 1
 
 function frame(realMs: number) {
   const dt = lastMs ? (realMs - lastMs) / 1000 : 0
@@ -893,6 +1101,16 @@ function frame(realMs: number) {
 
   hudName.textContent = controls.focus.name
   hudDist.textContent = formatDistance(controls.distance)
+
+  // Keep the address bar shareable. Placed after the camera/controls work above so it records
+  // THIS frame's view, and throttled to 1 Hz — updateUrl additionally no-ops when the encoded
+  // state is byte-identical to the last one written, so a parked camera with a paused clock
+  // stops touching history entirely.
+  urlWriteAccumS += dt
+  if (urlWriteAccumS >= URL_WRITE_INTERVAL_S) {
+    urlWriteAccumS = 0
+    updateUrl()
+  }
 
   engine.composer.render()
   // Kicked only once (the call is guarded): the belt's 17 MB fetch and buffer build wait until a
