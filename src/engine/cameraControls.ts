@@ -6,10 +6,18 @@ export interface Focusable {
   getPosition(out: THREE.Vector3): THREE.Vector3
   /** Closest allowed camera distance in AU (planet: ~1.4 radii; star: 500). */
   minApproachAu: number
+  /** Optional context anchor for FlyToAnimator's arrival auto-aim (see flyMath.ts's
+   *  aimOrientation): the TRUE heliocentric position of "what this target orbits" — the parent
+   *  planet for a moon, the Sun for a spacecraft or asteroid. On arrival, the camera orients so
+   *  its offset direction points from the anchor through the target, so the anchor lands in frame
+   *  behind the target. Omitted for stars/galaxies/DSOs, which have no meaningful anchor. */
+  aimAnchor?: () => THREE.Vector3
 }
 
 const MAX_DIST_AU = 4e14 // ~1.9 Gpc, just beyond the deepest galaxy in the catalog
-const PITCH_LIMIT = 1.52 // rad ≈ 87.1° — see setOrientation
+/** rad ≈ 87.1° — see setOrientation. Exported so flyMath.ts's aimOrientation (the fly-to
+ *  auto-aim's pure yaw/pitch helper) clamps to the exact same limit this class enforces. */
+export const PITCH_LIMIT = 1.52
 
 export class FocusOrbitControls {
   focus: Focusable

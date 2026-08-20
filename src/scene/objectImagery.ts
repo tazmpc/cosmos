@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { angularFovDeg } from '../data/angularSize'
 import { AU_PER_LY, PC_TO_AU } from '../data/units'
-import type { GalaxySpriteLayer, DeepSkySpriteLayer } from './galaxySprites'
+import { isSharedGlowTexture, type GalaxySpriteLayer, type DeepSkySpriteLayer } from './galaxySprites'
 
 /** A curated object (galaxy or deep-sky object) that can lazily upgrade its glow sprite to a
  * real hips2fits photo. Normalizes galaxies (diameterKly/distMpc) and DSOs (diameterLy/distPc)
@@ -162,8 +162,14 @@ export function createObjectImagery(
         texture.colorSpace = THREE.SRGBColorSpace
         texture.needsUpdate = true
         const material = target.sprite.material as THREE.SpriteMaterial
+        const oldMap = material.map
         material.map = vignetteTexture(texture)
         material.needsUpdate = true
+        // Free the glow texture's GPU memory once the photo is in — UNLESS it's one of the two
+        // shared curated-glow textures (createGalaxySprites/createDeepSkySprites), disposing which
+        // would blank every other sprite in that group that hasn't upgraded yet. Standalone OpenNGC
+        // glow textures (createStandaloneGlowSprite, one per object) are always safe to dispose.
+        if (oldMap && oldMap !== material.map && !isSharedGlowTexture(oldMap)) oldMap.dispose()
         const distAu = target.distPc * PC_TO_AU
         const sizeAu = 2 * distAu * Math.tan((fovDeg / 2) * (Math.PI / 180))
         target.sprite.scale.set(sizeAu, sizeAu, 1)

@@ -17,6 +17,20 @@ export interface Engine {
 
 const PIXEL_RATIO_CAP = 1.5 // 1.5 instead of full Retina 2.0: ~44% fewer fragments, visually near-identical for point fields
 
+// Set by apply() below, every time the engine (re)applies a pixel ratio. This project creates
+// exactly one Engine per session (see main.ts), so a module-level value is simpler than threading
+// a handle through every material with a uPixelRatio uniform (starField/galaxyField/Milky Way's
+// shared point shader, asteroidField, spacecraft glyphs) — each reads it in its own per-frame
+// update() instead of snapshotting window.devicePixelRatio once at material-creation time, which
+// went stale the moment the resolution governor (or a cross-display window drag) changed it.
+let lastAppliedPixelRatio = PIXEL_RATIO_CAP
+
+/** The pixel ratio actually applied to the renderer right now — reflecting both the resolution
+ *  governor's throttling and the device's own devicePixelRatio cap. See lastAppliedPixelRatio. */
+export function getRenderPixelRatio(): number {
+  return lastAppliedPixelRatio
+}
+
 export function createEngine(container: HTMLElement): Engine {
   const renderer = new THREE.WebGLRenderer({
     // The composer's own render target (below) carries the MSAA instead — see composerTarget.
@@ -85,6 +99,7 @@ export function createEngine(container: HTMLElement): Engine {
   // full canvas res instead — an extra halving on top of the pass's own.
   const apply = () => {
     pixelRatio = Math.min(governorRatio, dprCap())
+    lastAppliedPixelRatio = pixelRatio
     camera.aspect = window.innerWidth / window.innerHeight
     camera.updateProjectionMatrix()
     renderer.setPixelRatio(pixelRatio)

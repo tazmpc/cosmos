@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { easeInOutCubic, logLerp, flyDuration } from './flyMath'
+import { easeInOutCubic, logLerp, flyDuration, aimOrientation } from './flyMath'
+import { PITCH_LIMIT } from './cameraControls'
 
 describe('flyMath', () => {
   it('ease hits exact endpoints', () => {
@@ -21,5 +22,29 @@ describe('flyMath', () => {
     const mid = flyDuration(1, 1e4)
     expect(mid).toBeGreaterThan(2)
     expect(mid).toBeLessThan(6)
+  })
+})
+
+describe('aimOrientation', () => {
+  it('+x direction yields yaw 0, pitch 0', () => {
+    const { yaw, pitch } = aimOrientation({ x: 1, y: 0, z: 0 })
+    expect(yaw).toBeCloseTo(0, 10)
+    expect(pitch).toBeCloseTo(0, 10)
+  })
+
+  it('+z direction (straight up) clamps pitch to the controls pitch limit', () => {
+    const { pitch } = aimOrientation({ x: 0, y: 0, z: 1 })
+    expect(pitch).toBeCloseTo(PITCH_LIMIT, 10)
+  })
+
+  it('-z direction clamps pitch to the negative pitch limit', () => {
+    const { pitch } = aimOrientation({ x: 0, y: 0, z: -1 })
+    expect(pitch).toBeCloseTo(-PITCH_LIMIT, 10)
+  })
+
+  it('+y direction yields yaw pi/2', () => {
+    const { yaw, pitch } = aimOrientation({ x: 0, y: 1, z: 0 })
+    expect(yaw).toBeCloseTo(Math.PI / 2, 10)
+    expect(pitch).toBeCloseTo(0, 10)
   })
 })

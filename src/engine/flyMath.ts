@@ -1,3 +1,18 @@
+import { PITCH_LIMIT } from './cameraControls'
+
+/** Converts a normalized direction `d` into the (yaw, pitch) FocusOrbitControls.setOrientation
+ *  expects, such that the controls' camera OFFSET (see getOffset) points along `d`. Used by
+ *  FlyToAnimator's arrival "auto-aim": with d = normalize(targetPos − anchorPos), the camera ends
+ *  up beyond the target along the anchor→target line, framing the anchor behind it. Pure — no
+ *  THREE dependency — so the trig is unit-testable directly against plain {x,y,z} vectors.
+ *  Pitch is clamped to the same PITCH_LIMIT the controls themselves enforce (poles unreachable). */
+export function aimOrientation(d: { x: number; y: number; z: number }): { yaw: number; pitch: number } {
+  const yaw = Math.atan2(d.y, d.x)
+  const rawPitch = Math.asin(Math.max(-1, Math.min(1, d.z)))
+  const pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, rawPitch))
+  return { yaw, pitch }
+}
+
 export function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }

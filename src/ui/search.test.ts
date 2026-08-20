@@ -50,4 +50,47 @@ describe('search', () => {
       ({ name: `Star Alcor ${i}`, kind: 'star' as const, key: i, mag: i }))
     expect(search(many, 'alcor')).toHaveLength(8)
   })
+
+  it('dso, asteroid, and spacecraft tie with galaxy in one tier: below planet, above star', () => {
+    const tied: SearchEntry[] = [
+      { name: 'Testeria Star', kind: 'star', key: 40, mag: 1 },
+      { name: 'Testeria Galaxy', kind: 'galaxy', key: 'g-test', mag: -26 },
+      { name: 'Testeria Dso', kind: 'dso', key: 'd-test', mag: -26 },
+      { name: 'Testeria Asteroid', kind: 'asteroid', key: 'a-test', mag: -26 },
+      { name: 'Testeria Spacecraft', kind: 'spacecraft', key: 's-test', mag: -26 },
+      { name: 'Testeria Planet', kind: 'planet', key: 'p-test', mag: -30 },
+    ]
+    // all six are exact-prefix matches for "testeria" — the same match rank, so only the kind
+    // tiebreak (KIND_ORDER) decides order.
+    const kinds = search(tied, 'testeria', 10).map(e => e.kind)
+    expect(kinds).toHaveLength(6)
+    expect(kinds[0]).toBe('planet')
+    expect(kinds[kinds.length - 1]).toBe('star')
+    // galaxy/dso/asteroid/spacecraft all sit in the same middle tier — order among them isn't
+    // asserted (their equal mag ties fall back to insertion order), only that the tier itself is
+    // exactly these four kinds, sandwiched between planet and star.
+    expect(new Set(kinds.slice(1, -1))).toEqual(new Set(['galaxy', 'dso', 'asteroid', 'spacecraft']))
+  })
+
+  it('perf smoke: 50 varied searches over ~13k entries complete well under budget', () => {
+    const kinds = ['planet', 'galaxy', 'dso', 'asteroid', 'spacecraft', 'star'] as const
+    const entries: SearchEntry[] = Array.from({ length: 13_200 }, (_, i) => ({
+      name: `Object ${i} Alpha${i % 37} Beta${i % 101} Gamma${i % 293}`,
+      kind: kinds[i % kinds.length],
+      key: i,
+      mag: (i % 41) - 20,
+    }))
+    // Varied: a mix of short/long, prefix/substring, numeric and alpha queries — not 50 copies of
+    // the same lookup.
+    const queries = Array.from({ length: 50 }, (_, i) => {
+      const n = i * 260
+      const variants = [`Object ${n}`, `Alpha${i % 37}`, `Beta${i % 101}`, `Gamma${i % 293}`, `${n}`]
+      return variants[i % variants.length]
+    })
+    const start = performance.now()
+    for (const q of queries) search(entries, q)
+    const elapsedMs = performance.now() - start
+    console.log(`search perf smoke: 50 searches over ${entries.length} entries in ${elapsedMs.toFixed(2)} ms`)
+    expect(elapsedMs).toBeLessThan(250)
+  })
 })

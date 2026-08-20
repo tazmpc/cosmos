@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { decodeAsteroids, type AsteroidCatalog } from '../data/asteroidFormat'
 import { elementsToHeliocentricEqjInto, dateToJd, type OrbitalElements, type Xyz } from '../sim/kepler'
 import type { Focusable } from '../engine/cameraControls'
+import { getRenderPixelRatio } from '../engine/renderer'
 import { FAMOUS_ASTEROIDS } from '../data/asteroids'
 
 /**
@@ -36,6 +37,17 @@ import { FAMOUS_ASTEROIDS } from '../data/asteroids'
  *  as nothing at all rather than as a moving seam — the belt has no azimuthal features for the
  *  lag to smear, only the radial Kirkwood structure, which along-orbit lag cannot touch. */
 const CHUNK_PER_FRAME = 8_000
+
+/** Per-frame chunk size used right after a hidden->visible transition, until one full sweep of
+ *  the catalog completes — see the catch-up tracking in update(). While hidden, update() skips
+ *  propagation entirely (see VISIBLE_MAX_AU below), so every object's position can go stale by an
+ *  arbitrary amount (e.g. time-warping for sim-years while the camera sits beyond 100 AU). At the
+ *  normal CHUNK_PER_FRAME cadence that stale state then takes a full ~61-frame sweep (~1 s) to
+ *  clear, which reads as a visible "wave" of the belt catching up to the correct configuration.
+ *  32k/frame (4x normal) shortens that to ~16 frames — imperceptible — while staying well inside
+ *  the per-frame solve budget (measured ~0.21 us/solve, so 32k is ~6.7 ms: an acceptable one-time
+ *  cost for the frames right after becoming visible, vs. paying it on every frame). */
+const CATCHUP_CHUNK_PER_FRAME = 32_000
 
 /** Re-solve an object once sim time has moved this far from its last solution. Half a day moves
  *  a main-belt asteroid ~0.002 AU — sub-pixel at any distance the belt is visible from. */
@@ -155,7 +167,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
     fragmentShader: FRAG,
     uniforms: {
       uCamAu: { value: new THREE.Vector3() },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.5) },
+      uPixelRatio: { value: getRenderPixelRatio() },
       uColor: { value: ASTEROID_COLOR },
       uAlpha: { value: ASTEROID_ALPHA },
     },
@@ -206,6 +218,14 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
 
   let cursor = 0
 
+  // Hidden->visible catch-up tracking (see CATCHUP_CHUNK_PER_FRAME's doc comment). wasVisible
+  // starts false to match points.visible's own initial value above, so the very first frame the
+  // belt becomes visible is correctly treated as a transition. catchUpRemaining counts elements
+  // still owed a fast pass; it's set to `count` on a transition and drained by each frame's chunk
+  // until a full sweep has run, at which point the cadence drops back to CHUNK_PER_FRAME.
+  let wasVisible = false
+  let catchUpRemaining = 0
+
   // The named asteroids, as a flat array for the per-frame re-solve below. Built once — the map
   // never changes after load.
   const famousIndices = [...indexByMpcNumber.values()]
@@ -220,19 +240,23 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
 
     update(simDate, camTruePosAu) {
       ;(mat.uniforms.uCamAu.value as THREE.Vector3).copy(camTruePosAu)
+      mat.uniforms.uPixelRatio.value = getRenderPixelRatio()
       const visible = camTruePosAu.length() < VISIBLE_MAX_AU
       points.visible = visible
       // Hidden means no propagation at all — the layer's whole cost drops to this length check
-      // while the camera is out among the stars. Positions go stale, but the cursor re-solves
-      // every object within one full sweep (~61 frames) of becoming visible again.
-      if (!visible) return
+      // while the camera is out among the stars. Positions go stale, but the catch-up ramp below
+      // clears that staleness in ~16 frames (not the normal ~61) once visible again.
+      if (!visible) { wasVisible = false; return }
+      if (!wasVisible) catchUpRemaining = count // hidden -> visible: start (or restart) a fast sweep
+      wasVisible = true
 
       const jd = dateToJd(simDate)
       const simOffset = jd - catalog.baseEpochJd
       const t0 = import.meta.env.DEV ? performance.now() : 0
 
+      const inCatchUp = catchUpRemaining > 0
       const start = cursor
-      const n = Math.min(CHUNK_PER_FRAME, count)
+      const n = Math.min(inCatchUp ? CATCHUP_CHUNK_PER_FRAME : CHUNK_PER_FRAME, count)
       let solved = 0
       for (let k = 0; k < n; k++) {
         let i = start + k
@@ -281,6 +305,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
       posAttr.needsUpdate = true
 
       cursor = (start + n) % count
+      if (inCatchUp) catchUpRemaining = Math.max(0, catchUpRemaining - n)
 
       if (import.meta.env.DEV) {
         const w = window as unknown as { __cosmosAsteroids?: Record<string, number> }
@@ -289,6 +314,7 @@ export async function loadAsteroidField(scene: THREE.Scene): Promise<AsteroidFie
           famousResolved: famousIndices.length,
           solveMs: Number((performance.now() - t0).toFixed(3)),
           sweepFrames: Math.ceil(count / CHUNK_PER_FRAME),
+          catchingUp: inCatchUp ? 1 : 0,
         }
       }
     },
@@ -309,6 +335,11 @@ export const ASTEROID_ARRIVE_AU = 0.02
  * camera tracks the body as sim time advances, exactly like the planets' live ephemeris
  * Focusables, rather than freezing at the position it had when the fly-to started.
  */
+/** Heliocentric EQJ origin — the Sun sits at (0,0,0) in this project's frame. Returned as a shared
+ *  reference (never mutated) for asteroidFocusable's aimAnchor: the fly-to auto-aim reads it once,
+ *  synchronously, on arrival — see FlyToAnimator.update. */
+const SUN_ORIGIN = new THREE.Vector3(0, 0, 0)
+
 export function asteroidFocusable(
   field: AsteroidField, index: number, name: string, getDate: () => Date,
 ): Focusable {
@@ -316,6 +347,8 @@ export function asteroidFocusable(
     name,
     getPosition: (out) => field.positionAt(index, dateToJd(getDate()), out),
     minApproachAu: ASTEROID_MIN_APPROACH_AU,
+    // Auto-aim uses the Sun as the asteroid's "parent" — same idea as a moon's parent planet.
+    aimAnchor: () => SUN_ORIGIN,
   }
 }
 

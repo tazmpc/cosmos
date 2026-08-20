@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as THREE from 'three'
 import { createObjectImagery, hipsUrl, vignetteFalloff, type HipsTextureLoader, type ImageTarget } from './objectImagery'
+import { markGlowTextureShared } from './galaxySprites'
 import { PC_TO_AU, AU_PER_LY } from '../data/units'
 
 function makeTarget(id: string, overrides: Partial<ImageTarget> = {}): ImageTarget {
@@ -178,6 +179,32 @@ describe('createObjectImagery', () => {
       imagery.update(new THREE.Vector3(0, 0, 0), 1)
       expect(loader.calls).toHaveLength(1)
     })
+  })
+})
+
+describe('texture disposal on photo swap', () => {
+  it('disposes a standalone (non-shared) glow texture once the photo replaces it', () => {
+    const loader = new FakeLoader()
+    const target = makeTarget('ngc-standalone') // makeTarget's texture is a plain, unmarked THREE.Texture
+    const standaloneGlow = (target.sprite.material as THREE.SpriteMaterial).map!
+    const disposeSpy = vi.spyOn(standaloneGlow, 'dispose')
+    const imagery = createObjectImagery([target], loader)
+    imagery.focus('ngc-standalone')
+    loader.calls[0].onLoad(new THREE.Texture())
+    expect(disposeSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('never disposes the shared curated glow texture, even after the photo replaces it', () => {
+    const loader = new FakeLoader()
+    const sharedGlow = markGlowTextureShared(new THREE.Texture())
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: sharedGlow }))
+    const target = makeTarget('m31', { sprite })
+    const disposeSpy = vi.spyOn(sharedGlow, 'dispose')
+    const imagery = createObjectImagery([target], loader)
+    imagery.focus('m31')
+    loader.calls[0].onLoad(new THREE.Texture())
+    expect((target.sprite.material as THREE.SpriteMaterial).map).not.toBe(sharedGlow) // the swap did happen
+    expect(disposeSpy).not.toHaveBeenCalled()
   })
 })
 

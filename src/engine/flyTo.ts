@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { easeInOutCubic, flyDuration, logLerp } from './flyMath'
+import { aimOrientation, easeInOutCubic, flyDuration, logLerp } from './flyMath'
 import type { Focusable, FocusOrbitControls } from './cameraControls'
 
 /**
@@ -17,6 +17,8 @@ export class FlyToAnimator {
   private arriveDist = 0
   private virtualFocus = new THREE.Vector3()
   private tmp = new THREE.Vector3()
+  private aimAnchorPos = new THREE.Vector3()
+  private aimDir = new THREE.Vector3()
 
   constructor(private controls: FocusOrbitControls) {}
 
@@ -56,6 +58,19 @@ export class FlyToAnimator {
     this.controls.distance = logLerp(this.startDist, this.arriveDist, s)
     if (this.t >= 1) {
       this.active = false
+      // Auto-aim: point the camera's offset direction (see FocusOrbitControls.getOffset) along
+      // anchor -> target, so the camera sits beyond the target with its context anchor (a moon's
+      // parent planet, an asteroid/spacecraft's Sun) framed behind it. Must run BEFORE setFocus
+      // below — setOrientation only changes yaw/pitch, setFocus below re-clamps distance.
+      if (this.target.aimAnchor) {
+        this.aimAnchorPos.copy(this.target.aimAnchor())
+        this.aimDir.copy(this.tmp).sub(this.aimAnchorPos)
+        if (this.aimDir.lengthSq() > 1e-30) {
+          this.aimDir.normalize()
+          const { yaw, pitch } = aimOrientation(this.aimDir)
+          this.controls.setOrientation(yaw, pitch)
+        }
+      }
       this.controls.setFocus(this.target, this.arriveDist)
       this.target = null
     }

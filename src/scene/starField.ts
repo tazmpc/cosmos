@@ -3,6 +3,7 @@ import { decodeCatalog, type StarCatalog } from '../data/catalogFormat'
 import { chunkCatalog, type ChunkInfo } from '../data/chunkCatalog'
 import { colorIndexToRgb } from '../data/starColor'
 import { PC_TO_AU } from '../data/units'
+import { getRenderPixelRatio } from '../engine/renderer'
 
 export interface StarField extends PointLayer {
   /** Star name -> index into `catalog`, already remapped onto the chunk-reordered catalog. */
@@ -100,7 +101,7 @@ export function makePointMaterial(cfg: PointLayerConfig): THREE.ShaderMaterial {
       uAlphaCap: { value: cfg.alphaCap },
       uMinSize: { value: cfg.minSize },
       uMaxSize: { value: cfg.maxSize },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.5) },
+      uPixelRatio: { value: getRenderPixelRatio() },
       uLayerAlpha: { value: 1.0 },
     },
     transparent: true,
@@ -249,6 +250,10 @@ export async function loadPointLayer(scene: THREE.Scene, url: string, config: Po
       scratchCamPos.set(camTruePosAu.x / unitToAu, camTruePosAu.y / unitToAu, camTruePosAu.z / unitToAu)
       ;(mat.uniforms.uCamPc.value as THREE.Vector3).copy(scratchCamPos)
       mat.uniforms.uLayerAlpha.value = layerAlpha
+      // Read every frame, not just at material creation: the resolution governor (or a window
+      // drag to a different-DPI display) can change the applied ratio at any time — see
+      // renderer.ts's getRenderPixelRatio doc comment.
+      mat.uniforms.uPixelRatio.value = getRenderPixelRatio()
       // Below-threshold layers cost full vertex work every frame even at alpha 0 (no per-point
       // gating in the shader) — three.js skips the draw call entirely when the group is invisible,
       // so this is the actual perf win, not just a visual nicety.

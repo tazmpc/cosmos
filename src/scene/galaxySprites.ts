@@ -53,6 +53,29 @@ function makeGlowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(c)
 }
 
+// ---- shared-glow-texture tracking ----------------------------------------------------------
+// createGalaxySprites/createDeepSkySprites each build ONE glow CanvasTexture and reuse it across
+// every sprite in their group (~26 galaxies, ~15 DSOs) — see their doc comments. objectImagery's
+// photo-swap disposes the texture it replaces to avoid a GPU leak, but must never dispose one of
+// these two shared instances (that would blank every other still-glowing sprite in the group).
+// createStandaloneGlowSprite's per-object textures are NOT tracked here, so they stay disposable.
+const sharedGlowTextures = new WeakSet<THREE.Texture>()
+
+/** Marks `tex` as one of the shared curated-glow textures and returns it, so texture creation and
+ *  marking can happen in one expression at each call site. Exported (not just used internally) so
+ *  tests can construct a "shared" texture directly without spinning up a full sprite layer. */
+export function markGlowTextureShared(tex: THREE.Texture): THREE.Texture {
+  sharedGlowTextures.add(tex)
+  return tex
+}
+
+/** True for a texture created by createGalaxySprites/createDeepSkySprites — see the doc comment
+ *  above sharedGlowTextures. Used by objectImagery's photo-swap to decide whether the glow texture
+ *  it's about to replace is safe to dispose. */
+export function isSharedGlowTexture(tex: THREE.Texture | null | undefined): boolean {
+  return !!tex && sharedGlowTextures.has(tex)
+}
+
 function isCluster(def: GalaxyDef): boolean {
   return def.type.toLowerCase().includes('cluster')
 }
@@ -81,7 +104,7 @@ function isElliptical(def: GalaxyDef): boolean {
  * Cluster entries are skipped: a cluster isn't a single object and has no one diameter to size
  * a glow from. */
 export function createGalaxySprites(scene: THREE.Scene): GalaxySpriteLayer {
-  const texture = makeGlowTexture()
+  const texture = markGlowTextureShared(makeGlowTexture())
   const group = new THREE.Group()
   const sprites: GalaxySprite[] = []
 
@@ -161,7 +184,7 @@ export function createStandaloneGlowSprite(
  * galaxies. All rendered as simple round glows — unlike galaxies there's no consistent
  * elliptical/edge-on convention across nebula and cluster types worth encoding. */
 export function createDeepSkySprites(scene: THREE.Scene): DeepSkySpriteLayer {
-  const texture = makeGlowTexture()
+  const texture = markGlowTextureShared(makeGlowTexture())
   const group = new THREE.Group()
   const sprites: DeepSkySprite[] = []
 

@@ -36,7 +36,7 @@ import {
   SPACECRAFT_ARRIVE_AU, type SpacecraftField, type SpacecraftDef,
 } from './scene/spacecraft'
 import type { FamousAsteroid } from './data/asteroids'
-import { MPC_TO_AU, PC_TO_AU } from './data/units'
+import { KPC_TO_AU, MPC_TO_AU, PC_TO_AU } from './data/units'
 import { pickNearest, placeLabel, HOVER_PRIORITY, type HoverCandidate, type HoverKind } from './ui/hoverPick'
 import { dateToJd } from './sim/kepler'
 import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
@@ -241,11 +241,11 @@ loadStarField(engine.scene)
 // out of the current task — it can't stop three catalogs finishing their fetches within a few ms
 // of each other and then chunking back-to-back inside one frame burst). Stars go first and
 // unthrottled: it's the layer the camera is actually looking at from the starting vantage. The
-// Milky Way (interior + exterior) and galaxy catalogs are only visible from kpc/Mpc away, so
-// nothing is missing while they wait, and spacing their starts ~800 ms apart keeps their chunking
-// passes off the same frames as each other and as the star catalog's.
+// interior Milky Way and galaxy catalogs are only visible from kpc/Mpc away, so nothing is missing
+// while they wait, and spacing their starts ~800 ms apart keeps their chunking passes off the same
+// frames as each other and as the star catalog's. The EXTERIOR Milky Way has no fixed delay at
+// all — see startMilkyWayExtLoad below — it loads lazily, triggered by camera distance instead.
 const MILKY_WAY_LOAD_DELAY_MS = 800
-const MILKY_WAY_EXT_LOAD_DELAY_MS = 1600
 const GALAXY_LOAD_DELAY_MS = 2400
 
 let galaxies: GalaxyField | null = null
@@ -334,14 +334,27 @@ setTimeout(() => {
 // are near half weight. The exterior catalog spreads the same 1M points over the whole galaxy
 // rather than concentrating ~13% of them into the pencil beam toward the centre, so its projected
 // density — and therefore its additive brightness — is lower for the same per-point alpha.
+//
+// Lazy load: nothing needs this layer below the interior<->exterior handoff band (12-28 kpc,
+// layerAlphas.ts), so unlike every other layer above it has no fixed startup delay at all — it
+// loads only once the camera has actually gone somewhere that needs it. Triggered from frame()'s
+// ~1 Hz throttled check below, one-shot (loadStarted latches, same pattern as startAsteroidLoad).
 let milkyWayExt: PointLayer | null = null
-setTimeout(() => {
+let milkyWayExtLoadStarted = false
+/** Trigger radius: 8 kpc, well below the 12 kpc handoff band start — the fetch + chunking pass
+ *  needs a head start so the layer is actually ready by the time the crossfade wants it, not
+ *  triggered exactly as it's needed. */
+const MILKY_WAY_EXT_TRIGGER_AU = 8 * KPC_TO_AU
+
+function startMilkyWayExtLoad(): void {
+  if (milkyWayExtLoadStarted) return
+  milkyWayExtLoadStarted = true
   loadPointLayer(engine.scene, import.meta.env.BASE_URL + 'milkyway-ext.bin', {
     unitToAu: PC_TO_AU, unitToPc: 1, scale: 3, faintMag: 30, alphaCap: 0.075, minSize: 0.75, maxSize: 2,
   })
     .then(m => { milkyWayExt = m })
     .catch((err) => console.warn('Exterior Milky Way layer failed to load:', err))
-}, MILKY_WAY_EXT_LOAD_DELAY_MS)
+}
 
 // Constellation lines — sky-view-only overlay (d3-celestial line data). Loaded at startup so
 // they're ready the first time sky mode is entered; loadConstellations already warns + degrades
@@ -353,10 +366,15 @@ loadConstellations(engine.scene).then(c => {
 })
 
 export function planetFocusable(n: PlanetNode): Focusable {
+  // Moons get an aimAnchor pointing at their parent planet's live position — see FlyToAnimator's
+  // arrival "auto-aim": on arriving at a moon, the camera orients so the parent lands in frame
+  // behind it. Planets/the Sun (parent === null) have no meaningful anchor and get none.
+  const parentNode = n.def.parent != null ? planets.find(p => p.def.id === n.def.parent) : undefined
   return {
     name: n.def.name,
     getPosition: (out) => out.copy(n.truePos),
     minApproachAu: n.def.radiusAu * 1.4,
+    aimAnchor: parentNode ? () => parentNode.truePos : undefined,
   }
 }
 
@@ -779,6 +797,12 @@ let lastMs = 0
 // (EMA < 12ms for 300 consecutive frames) — see resolutionGovernor.ts for the pure step logic.
 const resolutionGovernor = new ResolutionGovernor()
 
+// ~1 Hz throttle for the exterior-Milky-Way lazy-load check (startMilkyWayExtLoad above) — cheap
+// enough to run every frame, but there's no reason to re-check camera distance 60x/sec for a
+// one-shot trigger. Same throttle shape as objectImagery's own proximity sweep.
+let milkyWayExtCheckAccumS = 0
+const MILKY_WAY_EXT_CHECK_INTERVAL_S = 1
+
 function frame(realMs: number) {
   const dt = lastMs ? (realMs - lastMs) / 1000 : 0
   lastMs = realMs
@@ -793,6 +817,11 @@ function frame(realMs: number) {
   updatePositions(planets, simNow)
   if (mode === 'sky') camTruePos.copy(earth.truePos)
   else controls.getCameraTruePos(camTruePos)
+  milkyWayExtCheckAccumS += dt
+  if (milkyWayExtCheckAccumS >= MILKY_WAY_EXT_CHECK_INTERVAL_S) {
+    milkyWayExtCheckAccumS = 0
+    if (!milkyWayExtLoadStarted && camTruePos.length() > MILKY_WAY_EXT_TRIGGER_AU) startMilkyWayExtLoad()
+  }
   const la = layerAlphas(camTruePos.length())
   if (mode === 'sky') {
     // At 1 AU the real MW crossfade ramp is 0 (it's tuned for galactic-scale distances) — but

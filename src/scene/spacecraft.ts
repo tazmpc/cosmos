@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Focusable } from '../engine/cameraControls'
+import { getRenderPixelRatio } from '../engine/renderer'
 import { interpolateTrajectory } from '../sim/trajectory'
 import { dateToJd } from '../sim/kepler'
 
@@ -36,6 +37,11 @@ export function spacecraftPositionAt(def: SpacecraftDef, jd: number): THREE.Vect
   return new THREE.Vector3(p.x, p.y, p.z)
 }
 
+/** Heliocentric EQJ origin — the Sun sits at (0,0,0) in this project's frame. Returned as a shared
+ *  reference (never mutated) for spacecraftFocusable's aimAnchor: the fly-to auto-aim reads it
+ *  once, synchronously, on arrival — see FlyToAnimator.update. */
+const SUN_ORIGIN = new THREE.Vector3(0, 0, 0)
+
 /** A Focusable that re-solves the trajectory from clock.now() every time it's asked where the
  *  craft is — same pattern as the asteroid belt's asteroidFocusable, so a fly-to chases (and a
  *  parked camera keeps tracking) a spacecraft exactly as sim time advances. */
@@ -44,6 +50,8 @@ export function spacecraftFocusable(def: SpacecraftDef, getDate: () => Date): Fo
     name: def.name,
     getPosition: (out) => out.copy(spacecraftPositionAt(def, dateToJd(getDate()))),
     minApproachAu: SPACECRAFT_MIN_APPROACH_AU,
+    // Auto-aim uses the Sun as the spacecraft's "parent" — same idea as a moon's parent planet.
+    aimAnchor: () => SUN_ORIGIN,
   }
 }
 
@@ -165,7 +173,7 @@ export async function loadSpacecraftField(scene: THREE.Scene): Promise<Spacecraf
     uniforms: {
       uCamAu: { value: new THREE.Vector3() },
       uPixelSize: { value: GLYPH_PIXEL_SIZE },
-      uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.5) },
+      uPixelRatio: { value: getRenderPixelRatio() },
       uMap: { value: texture },
       uAlpha: { value: 1 },
     },
@@ -211,6 +219,7 @@ export async function loadSpacecraftField(scene: THREE.Scene): Promise<Spacecraf
 
     update(simDate, camTruePosAu) {
       ;(mat.uniforms.uCamAu.value as THREE.Vector3).copy(camTruePosAu)
+      mat.uniforms.uPixelRatio.value = getRenderPixelRatio()
       const jd = dateToJd(simDate)
       defs.forEach((def, i) => {
         truePos.copy(spacecraftPositionAt(def, jd))
