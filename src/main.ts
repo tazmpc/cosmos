@@ -1096,6 +1096,7 @@ engine.renderer.domElement.addEventListener('click', (ev) => {
   if (hit) {
     const node = planets.find(p => p.mesh === hit.object)!
     if (node.def.name !== controls.focus.name) {
+      cancelPendingDeepLink() // disc-raycast fallback is user navigation too — abandon any pending link
       spacecraft?.setFocused(null)
       flyer.start(planetFocusable(node), node.def.radiusAu * 8)
       currentFocusRef = { kind: 'planet', key: node.def.id } // keep the shareable URL truthful
