@@ -152,6 +152,10 @@ export interface SpacecraftField {
   /** Per-frame: repositions the glyphs and the focused trajectory line. `simDate` is the sim
    *  clock's current time; `camTruePosAu` the camera's heliocentric position. */
   update(simDate: Date, camTruePosAu: THREE.Vector3): void
+  /** Every Object3D this layer owns — the shared glyph Points plus one trajectory Line per craft.
+   *  Unlike the point layers there's no single group to reach for, and the diagnostics harness
+   *  (src/ui/diag.ts) needs to hide the layer WHOLE to bisect a rendering artifact. */
+  objects: THREE.Object3D[]
 }
 
 export async function loadSpacecraftField(scene: THREE.Scene): Promise<SpacecraftField> {
@@ -211,6 +215,7 @@ export async function loadSpacecraftField(scene: THREE.Scene): Promise<Spacecraf
 
   return {
     defs, byId,
+    objects: [points, ...lines.values()],
 
     setFocused(id) {
       focusedId = id

@@ -41,8 +41,18 @@ import { pickNearest, placeLabel, HOVER_PRIORITY, type HoverCandidate, type Hove
 import { dateToJd } from './sim/kepler'
 import { loadExoplanets, hostForStarName, type ExoplanetCatalog, type ExoplanetHost } from './data/exoplanets'
 import { decodeViewState, encodeViewState, type FocusRef, type ViewState } from './ui/urlState'
+import { runDiag } from './ui/diag'
 
-const engine = createEngine(document.getElementById('app')!)
+// --- Rendering diagnostics (opt-in, query-param gated) ----------------------------------------
+// `?diag=<url>` arms the layer bisector in src/ui/diag.ts — see its doc comment. Read here,
+// before anything is built, because the flag has to reach the WebGL context at creation time:
+// readPixels on the default framebuffer only sees a composited frame when the context was made
+// with preserveDrawingBuffer. Without the param this is null and nothing below it changes.
+const diagUrl = new URLSearchParams(location.search).get('diag')
+
+const engine = createEngine(document.getElementById('app')!, {
+  preserveDrawingBuffer: diagUrl !== null,
+})
 
 // --- Deep links: read the incoming URL before anything is built ------------------------------
 // Parsed exactly once, here, so the clock can be constructed at the shared simulation date
@@ -1246,6 +1256,39 @@ function frame(realMs: number) {
   requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
+
+// --- Rendering diagnostics: hand the bisector live handles on every hideable layer -------------
+// Inert unless `?diag=<report-url>` is on the URL (diagUrl is read at the very top of this file).
+// Everything here is a GETTER, deliberately: most of these layers are still loading at this point
+// in startup, and the harness only looks ~10 s later. Started after the frame loop so its awaited
+// requestAnimationFrame chain settles behind the app's own frame callback — it must read a
+// composited frame, not one halfway through being drawn.
+if (diagUrl) {
+  runDiag(diagUrl, {
+    engine,
+    // The Sun's soft glow is an additive Sprite parented to the Sun mesh (solarSystem.ts), not a
+    // scene-level layer — found by traversal rather than held as a handle.
+    sunGlow: () => {
+      const sun = planets.find((p) => p.def.id === 'sun')
+      if (!sun) return null
+      let sprite: THREE.Object3D | null = null
+      sun.mesh.traverse((o) => { if ((o as THREE.Sprite).isSprite) sprite = o })
+      return sprite
+    },
+    planets: () => planets.map((p) => p.mesh),
+    stars: () => stars?.group ?? null,
+    milkyWayInterior: () => milkyWay?.group ?? null,
+    milkyWayExt: () => milkyWayExt?.group ?? null,
+    galaxies: () => galaxies?.group ?? null,
+    asteroids: () => asteroids?.points ?? null,
+    brightStars: () => brightStars?.points ?? null,
+    spacecraft: () => spacecraft?.objects ?? [],
+    orbitLines: () => orbits,
+    constellations: () => constellations?.group ?? null,
+    galaxySprites: () => galaxySprites.group,
+    deepSkySprites: () => deepSkySprites.group,
+  })
+}
 
 // Dev-only camera hook, alongside the existing __cosmosStats counters in starField.ts. The visual
 // gates for this scene ("does the Milky Way show spiral arms from 300 kly", "is the dust rift

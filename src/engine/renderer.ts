@@ -31,7 +31,17 @@ export function getRenderPixelRatio(): number {
   return lastAppliedPixelRatio
 }
 
-export function createEngine(container: HTMLElement): Engine {
+export interface EngineOptions {
+  /** WebGL's `preserveDrawingBuffer`. Off by default (it can cost an extra full-screen copy per
+   *  presented frame). The diagnostics harness — src/ui/diag.ts, active only when the page URL
+   *  carries a `diag` query param — turns it on so it can gl.readPixels the DEFAULT framebuffer
+   *  after the frame has been composited, which is the only way to count what the user actually
+   *  sees (post OutputPass tone mapping and color-space encoding) rather than what an offscreen
+   *  target holds. */
+  preserveDrawingBuffer?: boolean
+}
+
+export function createEngine(container: HTMLElement, options: EngineOptions = {}): Engine {
   const renderer = new THREE.WebGLRenderer({
     // The composer's own render target (below) carries the MSAA instead — see composerTarget.
     // Canvas MSAA would only ever smooth the OutputPass's single full-screen quad, which has no
@@ -39,6 +49,7 @@ export function createEngine(container: HTMLElement): Engine {
     antialias: false,
     logarithmicDepthBuffer: true,
     powerPreference: 'high-performance',
+    preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
   })
 
   // Ratio requested by the dynamic-resolution governor (main.ts), clamped every apply() against
