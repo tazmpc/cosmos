@@ -137,7 +137,10 @@ const FRAG = /* glsl */ `
   #include <logdepthbuf_pars_fragment>
 
   void main() {
-    float a = texture2D(uMap, gl_PointCoord).a * vAlpha;
+    // The halo texture encodes its shape in (greyscale) RGB with opaque alpha — NOT in the alpha
+    // channel — so low-alpha texels can't speckle on WebKit (see the sun-glow comment in
+    // solarSystem.ts). Sample .r for the shape; .a is a constant 1.0 by construction.
+    float a = texture2D(uMap, gl_PointCoord).r * vAlpha;
     if (a < 0.002) discard;
     gl_FragColor = vec4(vColor, a);
 

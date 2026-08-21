@@ -131,7 +131,11 @@ const FRAG = /* glsl */ `
 
   void main() {
     vec4 tex = texture2D(uMap, gl_PointCoord);
-    float a = tex.a * uAlpha;
+    // The glyph texture keeps its shape in RGB over an opaque black background — its alpha is a
+    // constant 1.0 (alpha-encoded additive canvas textures speckle on WebKit; see solarSystem.ts).
+    // Recover the shape from the brightest channel so the discard and the fade still track it.
+    float shape = max(max(tex.r, tex.g), tex.b);
+    float a = shape * uAlpha;
     if (a < 0.01) discard;
     gl_FragColor = vec4(tex.rgb, a);
 
