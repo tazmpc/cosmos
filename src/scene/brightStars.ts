@@ -83,8 +83,11 @@ function makeHaloTexture(): THREE.CanvasTexture {
       const spikeV = Math.exp(-((dx / 0.018) ** 2)) * Math.exp(-((dy / 0.60) ** 2))
       const a = Math.min(1, core + 0.5 * (spikeH + spikeV))
       const i = (y * TEX_SIZE + x) * 4
-      px[i] = 255; px[i + 1] = 255; px[i + 2] = 255
-      px[i + 3] = Math.round(a * 255)
+      // Brightness lives in RGB, alpha stays opaque — see the sun-glow comment in
+      // solarSystem.ts (alpha-encoded additive textures speckle on WebKit).
+      const v = Math.round(a * 255)
+      px[i] = v; px[i + 1] = v; px[i + 2] = v
+      px[i + 3] = 255
     }
   }
   ctx.putImageData(img, 0, 0)

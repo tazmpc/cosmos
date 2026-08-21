@@ -44,10 +44,15 @@ function makeGlowTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = c.height = 128
   const ctx = c.getContext('2d')!
+  // Opaque premultiplied-RGB on black (alpha 1 throughout): see the sun-glow comment in
+  // solarSystem.ts — alpha-gradient canvases upload through an un-premultiply that turns
+  // low-alpha texels into wrong-hue speckles on WebKit.
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, 128, 128)
   const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
-  g.addColorStop(0, 'rgba(255,245,230,0.85)')
-  g.addColorStop(0.4, 'rgba(255,225,190,0.25)')
-  g.addColorStop(1, 'rgba(255,225,190,0)')
+  g.addColorStop(0, 'rgb(217,208,196)')
+  g.addColorStop(0.4, 'rgb(64,56,48)')
+  g.addColorStop(1, 'rgb(0,0,0)')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, 128, 128)
   return new THREE.CanvasTexture(c)

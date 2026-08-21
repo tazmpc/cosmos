@@ -94,16 +94,10 @@ export function createEngine(container: HTMLElement, options: EngineOptions = {}
   // every downstream pass just samples an ordinary resolved texture) — this is what restores
   // planet-limb edge quality now that canvas antialias is off. Actual size doesn't matter here;
   // it's placeholder-sized and corrected by apply() below, right after all passes are added.
-  // WebKit/Safari's WebGL-on-Metal has a long-standing weakness resolving MULTISAMPLED
-  // half-float renderbuffers: bright regions can resolve to uninitialized-looking teal/green
-  // blocks (user-reported on the Sun close-up; Chromium renders the identical scene cleanly).
-  // Safari therefore gets samples: 0 — it keeps HalfFloat (bloom quality) and every other
-  // feature; only the composer-target MSAA is dropped there. Edge softening via bloom remains.
-  const isWebKit = /^((?!chrome|chromium|android).)*safari/i.test(navigator.userAgent)
-  const composerTarget = new THREE.WebGLRenderTarget(1, 1, {
-    type: THREE.HalfFloatType,
-    samples: isWebKit ? 0 : 4,
-  })
+  // (A WebKit teal-speckle artifact was once suspected to be MSAA-resolve garbage and samples
+  // was dropped to 0 on Safari; the in-app diag bisector then proved the real culprit was the
+  // alpha-encoded additive glow textures — see solarSystem.ts — so full MSAA is restored here.)
+  const composerTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 })
   const composer = new EffectComposer(renderer, composerTarget)
   composer.addPass(new RenderPass(scene, camera))
   const bloom = new UnrealBloomPass(

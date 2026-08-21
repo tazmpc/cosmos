@@ -70,17 +70,21 @@ function makeGlyphTexture(): THREE.CanvasTexture {
   const cy = SIZE / 2
 
   // Soft core, same radial-gradient recipe as the other glow sprites in this project.
+  // Opaque premultiplied-RGB on black — see the sun-glow comment in solarSystem.ts
+  // (alpha-encoded additive textures speckle on WebKit).
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, SIZE, SIZE)
   const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, SIZE * 0.28)
-  core.addColorStop(0, 'rgba(255,255,255,1)')
-  core.addColorStop(0.5, 'rgba(220,235,255,0.75)')
-  core.addColorStop(1, 'rgba(220,235,255,0)')
+  core.addColorStop(0, 'rgb(255,255,255)')
+  core.addColorStop(0.5, 'rgb(165,176,191)')
+  core.addColorStop(1, 'rgb(0,0,0)')
   ctx.fillStyle = core
   ctx.fillRect(0, 0, SIZE, SIZE)
 
   // Antenna-dish tick: a short bright line off to one side, just enough to read as "a probe",
   // not a star. Angle is arbitrary — the sprite billboards to the camera, so there is no real
   // orientation to preserve.
-  ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+  ctx.strokeStyle = 'rgb(230,230,230)'
   ctx.lineWidth = SIZE * 0.06
   ctx.lineCap = 'round'
   ctx.beginPath()

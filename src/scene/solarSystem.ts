@@ -82,9 +82,15 @@ export function createSolarSystem(scene: THREE.Scene): { nodes: PlanetNode[]; su
     if (def.id === 'sun') {
       const c = document.createElement('canvas'); c.width = c.height = 128
       const ctx = c.getContext('2d')!
+      // Additive sprites encode brightness in OPAQUE RGB (alpha 1, black background) instead of
+      // an alpha gradient: canvas backing stores are premultiplied, and un-premultiplying the
+      // low-alpha texels on upload amplifies quantization/dither noise into wrong-hue speckles —
+      // WebKit renders that as teal confetti (diag-bisected to this sprite). Black adds nothing
+      // under AdditiveBlending, so the visual result is identical where it worked before.
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 128, 128)
       const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
-      g.addColorStop(0, 'rgba(255,240,210,0.9)'); g.addColorStop(0.3, 'rgba(255,200,120,0.35)')
-      g.addColorStop(1, 'rgba(255,180,80,0)')
+      g.addColorStop(0, 'rgb(230,216,189)'); g.addColorStop(0.3, 'rgb(89,70,42)')
+      g.addColorStop(1, 'rgb(0,0,0)')
       ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128)
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
         map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false,
